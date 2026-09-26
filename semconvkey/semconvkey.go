@@ -289,6 +289,10 @@ func (c checker) typeOfCallee(call *ast.CallExpr) types.Type {
 
 func (c checker) checkCompositeLit(lit *ast.CompositeLit) {
 	t := c.pass.TypesInfo.TypeOf(lit)
+	// An elided literal inside []*T{...} is recorded as *T, not T.
+	if ptr, ok := types.Unalias(t).(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
 
 	if named, ok := c.opaqueConfiguredType(t); ok {
 		c.pass.Reportf(lit.Pos(), zeroValueMessage, named.Obj().Name(), named.Obj().Pkg().Name())

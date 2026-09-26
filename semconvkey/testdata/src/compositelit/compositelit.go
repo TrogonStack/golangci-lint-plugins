@@ -17,3 +17,10 @@ func Attrs(v string) []attribute.KeyValue {
 		{Value: v},                             // want `attribute key must come from`
 	}
 }
+
+func Pointers(v string) []*attribute.KeyValue {
+	return []*attribute.KeyValue{
+		{Key: semconv.MessagingSystemKey, Value: v},
+		{Key: "app.user.tier", Value: v}, // want `attribute key must come from`
+	}
+}

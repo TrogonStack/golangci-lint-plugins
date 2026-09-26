@@ -17,8 +17,11 @@ func Attrs() []attribute.KeyValue {
 		{}, // want `TierAttr has no exported fields`
 		appsemconv.NewTierAttr("gold"),
 	}
+	elidedPointer := []*appsemconv.TierAttr{
+		{}, // want `TierAttr has no exported fields`
+	}
 	_ = appsemconv.Options{Prefix: "app"}
 	_ = appsemconv.Marker{}
 
-	return []attribute.KeyValue{bare.KeyValue(), pointer.KeyValue(), elided[0].KeyValue()}
+	return []attribute.KeyValue{bare.KeyValue(), pointer.KeyValue(), elided[0].KeyValue(), elidedPointer[0].KeyValue()}
 }
