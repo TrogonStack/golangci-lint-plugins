@@ -1,4 +1,4 @@
-package echo // want "package wrongpath/connectrpc/pingservice/echo serves rpc Echo of EchoService, so it must be at echoservice/echo or echo_service/echo"
+package echo // want "package wrongpath/connectrpc/pingservice/echo serves rpc Echo of EchoService, so it must be at echoservice/echo"
 
 import (
 	"context"

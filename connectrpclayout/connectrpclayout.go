@@ -10,9 +10,9 @@
 // is a package that declares a handler whose type is one of the generated
 // struct's handler func types. That keeps the rule free of any fixed root
 // directory, and leaves helper packages beside the rpc packages alone. The
-// path and package name are compared with case and underscores ignored, so
-// echoservice/echostream and echo_service/echo_stream both name the
-// EchoStream rpc of EchoService.
+// path and package name spell the service and rpc in one Naming, snake_case
+// unless configured otherwise: echo_service/echo_stream for the EchoStream rpc
+// of EchoService, or echoservice/echostream under Lowercase.
 //
 // An rpc package declares exactly one of the two. Handler is the handler
 // itself, for an rpc that needs nothing from the process around it.
@@ -21,6 +21,8 @@
 package connectrpclayout
 
 import (
+	"errors"
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -36,15 +38,72 @@ import (
 // golangci-lint's linter listing.
 const Doc = "checks that Connect rpc handlers live in <service>/<rpc> packages named for the rpc and declare Handler or NewHandler in the file named for the package"
 
-// Analyzer is connectrpclayout itself, for any analysis driver: golangci-lint
-// through connectrpclayout/plugin, or a singlechecker binary.
-var Analyzer = &analysis.Analyzer{
-	Name: "connectrpclayout",
-	Doc:  Doc,
-	Run:  run,
+// Naming is how a service or rpc name is spelled as a directory and a package
+// name.
+type Naming string
+
+const (
+	// SnakeCase splits words with underscores: echo_service/echo_stream. It is
+	// the default, because a name of several words run together is hard to
+	// read back.
+	SnakeCase Naming = "snake_case"
+	// Lowercase runs the words together: echoservice/echostream, the spelling
+	// Go's own package naming advice asks for.
+	Lowercase Naming = "lowercase"
+)
+
+var ErrUnknownNaming = errors.New("unknown naming")
+
+// orDefault is n, or SnakeCase when n is unset, or an error when n is neither
+// of the namings the linter knows.
+func (n Naming) orDefault() (Naming, error) {
+	switch n {
+	case "":
+		return SnakeCase, nil
+	case SnakeCase, Lowercase:
+		return n, nil
+	default:
+		return "", fmt.Errorf("%w %q: want %q or %q", ErrUnknownNaming, n, SnakeCase, Lowercase)
+	}
 }
 
-func run(pass *analysis.Pass) (any, error) {
+func (n Naming) spell(name string) string {
+	if n == Lowercase {
+		return strings.ToLower(name)
+	}
+	return snakeCase(name)
+}
+
+// Settings is what golangci-lint's custom linter settings decode into.
+type Settings struct {
+	Naming Naming `json:"naming"`
+}
+
+// Analyzer is connectrpclayout with the default settings, for any analysis
+// driver: golangci-lint through connectrpclayout/plugin, or a singlechecker
+// binary.
+var Analyzer = newAnalyzer(SnakeCase)
+
+// New is connectrpclayout configured by settings.
+func New(settings Settings) (*analysis.Analyzer, error) {
+	naming, err := settings.Naming.orDefault()
+	if err != nil {
+		return nil, err
+	}
+	return newAnalyzer(naming), nil
+}
+
+func newAnalyzer(naming Naming) *analysis.Analyzer {
+	return &analysis.Analyzer{
+		Name: "connectrpclayout",
+		Doc:  Doc,
+		Run: func(pass *analysis.Pass) (any, error) {
+			return run(pass, naming)
+		},
+	}
+}
+
+func run(pass *analysis.Pass, naming Naming) (any, error) {
 	// A driver that loads test variants (analysistest, and go vet's own driver
 	// with -test) synthesizes a package for the test binary's main, named
 	// "main" with an import path ending in ".test". It is not code anyone
@@ -53,7 +112,7 @@ func run(pass *analysis.Pass) (any, error) {
 		return nil, nil
 	}
 
-	c := &checker{pass: pass, services: map[*types.Package][]rpcField{}}
+	c := &checker{pass: pass, naming: naming, services: map[*types.Package][]rpcField{}}
 	c.checkHandlerPackage()
 	return nil, nil
 }
@@ -74,15 +133,21 @@ type rpcField struct {
 	typ     types.Type // the field's type, e.g. EchoServiceEchoStreamHandlerFunc
 }
 
-// path is where the package serving the field's rpc lives, in both of the
-// spellings the rule accepts.
-func (f rpcField) path() string {
-	return strings.ToLower(f.service) + "/" + strings.ToLower(f.rpc) + " or " + snakeCase(f.service) + "/" + snakeCase(f.rpc)
-}
-
 type checker struct {
 	pass     *analysis.Pass
+	naming   Naming
 	services map[*types.Package][]rpcField
+}
+
+// path is where the package serving field's rpc lives.
+func (c *checker) path(field rpcField) string {
+	return c.naming.spell(field.service) + "/" + c.naming.spell(field.rpc)
+}
+
+// servesPath reports whether the last two segments of the package's path spell
+// the service and rpc of field.
+func (c *checker) servesPath(field rpcField) bool {
+	return strings.HasSuffix(c.pass.Pkg.Path(), "/"+c.path(field))
 }
 
 // fieldsOf returns the <Rpc>Func fields of every generated service struct pkg
@@ -208,17 +273,18 @@ func (c *checker) checkHandlerPackage() {
 	}
 	field := declared.field
 
-	if !servesPath(c.pass.Pkg.Path(), field) {
+	if !c.servesPath(field) {
 		c.pass.Reportf(files[0].Package, "package %s serves rpc %s of %s, so it must be at %s",
-			c.pass.Pkg.Path(), field.rpc, field.service, field.path())
+			c.pass.Pkg.Path(), field.rpc, field.service, c.path(field))
 	}
 
 	// The file is only worth naming once the package is: against a wrong
 	// package name, <package>.go would point at a file that should not exist.
-	nameMatches := normalize(c.pass.Pkg.Name()) == normalize(field.rpc)
+	wantName := c.naming.spell(field.rpc)
+	nameMatches := c.pass.Pkg.Name() == wantName
 	if !nameMatches {
-		c.pass.Reportf(files[0].Package, "package %s serves rpc %s, so it must be named %s or %s, got %s",
-			c.pass.Pkg.Path(), field.rpc, strings.ToLower(field.rpc), snakeCase(field.rpc), c.pass.Pkg.Name())
+		c.pass.Reportf(files[0].Package, "package %s serves rpc %s, so it must be named %s, got %s",
+			c.pass.Pkg.Path(), field.rpc, wantName, c.pass.Pkg.Name())
 	}
 
 	// Both is the ambiguous case rather than the generous one: it leaves two
@@ -241,14 +307,15 @@ func (c *checker) checkHandlerPackage() {
 }
 
 // isRPCPackage reports whether decls make this an rpc package: one of them is
-// named Handler or NewHandler, or the package already sits at the path of the
-// rpc one of them serves. Anything else that returns a handler, a wiring
+// named Handler or NewHandler, or the package sits at the path of the rpc one
+// of them serves, in any spelling, so a misnamed handler is still found in a
+// directory spelled the other way. Anything else that returns a handler, a wiring
 // package handing a handler on for instance, is not an rpc package, and
 // holding it to the rules for one would report the code that uses handlers
 // rather than the code that declares them.
 func (c *checker) isRPCPackage(decls []handlerDecl) bool {
 	for _, decl := range decls {
-		if decl.name.Name == handlerName || decl.name.Name == newHandlerName || servesPath(c.pass.Pkg.Path(), decl.field) {
+		if decl.name.Name == handlerName || decl.name.Name == newHandlerName || nearPath(c.pass.Pkg.Path(), decl.field) {
 			return true
 		}
 	}
@@ -329,9 +396,9 @@ func serviceStructFields(named *types.Named) []rpcField {
 	return fields
 }
 
-// servesPath reports whether the last two segments of path name the service
-// and rpc of field, with case and underscores ignored.
-func servesPath(path string, field rpcField) bool {
+// nearPath reports whether the last two segments of path name the service and
+// rpc of field, with case and underscores ignored.
+func nearPath(path string, field rpcField) bool {
 	segments := strings.Split(path, "/")
 	if len(segments) < 2 {
 		return false
@@ -346,14 +413,18 @@ func normalize(name string) string {
 	return strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(name))
 }
 
-// snakeCase spells a Go identifier the way a snake_case directory would, for
-// diagnostics: EchoStream is echo_stream and PingV2Service is ping_v2_service.
+// snakeCase spells a Go identifier as snake_case words: EchoStream is
+// echo_stream, PingV2Service is ping_v2_service, and an initialism stays one
+// word, so GetHTTPStatus is get_http_status.
 func snakeCase(name string) string {
 	var b strings.Builder
 	runes := []rune(name)
 	for i, r := range runes {
-		if i > 0 && unicode.IsUpper(r) && !unicode.IsUpper(runes[i-1]) {
-			b.WriteByte('_')
+		if i > 0 && unicode.IsUpper(r) {
+			startsWord := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			if !unicode.IsUpper(runes[i-1]) || startsWord {
+				b.WriteByte('_')
+			}
 		}
 		b.WriteRune(unicode.ToLower(r))
 	}

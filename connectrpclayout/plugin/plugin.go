@@ -15,16 +15,26 @@ func init() {
 	register.Plugin("connectrpclayout", newPlugin)
 }
 
-type linter struct{}
-
-// The layout has no knobs, so there is nothing to configure and the settings
-// are ignored.
-func newPlugin(any) (register.LinterPlugin, error) {
-	return linter{}, nil
+type linter struct {
+	analyzer *analysis.Analyzer
 }
 
-func (linter) BuildAnalyzers() ([]*analysis.Analyzer, error) {
-	return []*analysis.Analyzer{connectrpclayout.Analyzer}, nil
+func newPlugin(conf any) (register.LinterPlugin, error) {
+	settings, err := register.DecodeSettings[connectrpclayout.Settings](conf)
+	if err != nil {
+		return nil, err
+	}
+
+	analyzer, err := connectrpclayout.New(settings)
+	if err != nil {
+		return nil, err
+	}
+
+	return linter{analyzer: analyzer}, nil
+}
+
+func (l linter) BuildAnalyzers() ([]*analysis.Analyzer, error) {
+	return []*analysis.Analyzer{l.analyzer}, nil
 }
 
 // Types info, not syntax: the linter recognises an rpc package by the

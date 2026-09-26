@@ -1,4 +1,4 @@
-package echoer // want "package badpkgname/connectrpc/echoservice/echo serves rpc Echo, so it must be named echo or echo, got echoer"
+package echoer // want "package badpkgname/connectrpc/echoservice/echo serves rpc Echo, so it must be named echo, got echoer"
 
 import (
 	"context"
