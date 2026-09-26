@@ -225,13 +225,22 @@ func (c checker) checkCall(call *ast.CallExpr) {
 
 	// A dot import leaves a package function as a bare identifier, so the
 	// callee is resolved from either shape; only a method has a receiver.
+	// A method expression, attribute.Key.String(key, v), passes its receiver
+	// as the first argument instead.
 	var callee *ast.Ident
 	var recv ast.Expr
+	args := call.Args
 	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
 		callee = fun
 	case *ast.SelectorExpr:
 		callee, recv = fun.Sel, fun.X
+		if sel, ok := c.pass.TypesInfo.Selections[fun]; ok && sel.Kind() == types.MethodExpr {
+			if len(args) == 0 {
+				return
+			}
+			recv, args = args[0], args[1:]
+		}
 	default:
 		return
 	}
@@ -263,7 +272,7 @@ func (c checker) checkCall(call *ast.CallExpr) {
 			c.pass.Reportf(call.Pos(), "%s", instrumentMessage)
 			return
 		}
-		if len(call.Args) > 0 && !c.fromAllowed(call.Args[0]) {
+		if len(args) > 0 && !c.fromAllowed(args[0]) {
 			c.pass.Reportf(call.Pos(), "%s", metricNameMessage)
 		}
 	}

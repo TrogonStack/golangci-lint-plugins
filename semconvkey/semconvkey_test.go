@@ -43,6 +43,7 @@ func TestAnalyzer(t *testing.T) {
 				"compositelit",
 				"dotimport",
 				"alias",
+				"methodexpr",
 				"metricname",
 				"unconfigured",
 				"generated",
