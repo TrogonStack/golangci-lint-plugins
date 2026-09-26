@@ -7,8 +7,9 @@ Checks the shape of a plain `net/http` handler package. A package declaring
 - declare it in the file named for the package, as `<package>.go`;
 - spell `Handler` as a func `func(http.ResponseWriter, *http.Request)`, never a
   var or a type, for a handler that needs nothing from the process around it;
-- spell `NewHandler` as `func(HandlerOptions) http.Handler`, with
-  `HandlerOptions` declared in the same package, for a handler that does.
+- spell `NewHandler` as `func(HandlerOptions) http.Handler`, or
+  `func(HandlerOptions) (http.Handler, error)` when it rejects invalid options,
+  with `HandlerOptions` declared in the same package, for a handler that does.
 
 ```go
 package healthz
@@ -27,8 +28,11 @@ type HandlerOptions struct {
 	Store Store
 }
 
-func NewHandler(opts HandlerOptions) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+func NewHandler(opts HandlerOptions) (http.Handler, error) {
+	if opts.Store == nil {
+		return nil, ErrStoreRequired
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), nil
 }
 ```
 

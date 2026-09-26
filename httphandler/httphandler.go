@@ -9,7 +9,8 @@
 // handler is something any importer can reassign, and one spelling of the
 // convention is the point. NewHandler is for a handler that does need
 // something: it takes a single HandlerOptions declared beside it and returns
-// an http.Handler, so every handler package is wired the same way. A package
+// an http.Handler, or an http.Handler and an error when it validates those
+// options, so every handler package is wired the same way. A package
 // declares one of the two, never both, so a package has one answer to what
 // its handler is rather than two.
 //
@@ -148,8 +149,8 @@ func isHandlerFuncSignature(sig *types.Signature) bool {
 }
 
 // checkConstructor checks that NewHandler takes exactly one argument,
-// a HandlerOptions declared beside it, and returns exactly one result, an
-// http.Handler. One struct parameter rather than a positional list, so a
+// a HandlerOptions declared beside it, and returns an http.Handler,
+// optionally followed by an error for options it rejects. One struct parameter rather than a positional list, so a
 // handler that gains an input later is a new field rather than a changed
 // signature at every call site; a struct declared in this package rather than
 // shared, because two handlers needing the same dependencies today is not a
@@ -187,11 +188,14 @@ func checkConstructorParams(pass *analysis.Pass, fn *ast.FuncDecl, sig *types.Si
 
 func checkConstructorResults(pass *analysis.Pass, fn *ast.FuncDecl, sig *types.Signature) {
 	results := sig.Results()
-	if results.Len() == 1 && isHTTPHandler(results.At(0).Type()) {
+	switch {
+	case results.Len() == 1 && isHTTPHandler(results.At(0).Type()):
+		return
+	case results.Len() == 2 && isHTTPHandler(results.At(0).Type()) && isError(results.At(1).Type()):
 		return
 	}
 
-	pass.Reportf(resultsPos(fn), "%s must return http.Handler, got %s",
+	pass.Reportf(resultsPos(fn), "%s must return http.Handler or (http.Handler, error), got %s",
 		newHandlerName, resultsString(pass, results))
 }
 
@@ -241,7 +245,7 @@ func typeString(pass *analysis.Pass, t types.Type) string {
 
 // resultsString renders a func's results the way a reader would write them
 // at a call site: a bare type for one result, a parenthesized list for any
-// other count, so "got (http.Handler, error)" names the actual extra result
+// other count, so "got (error, http.Handler)" names the actual extra result
 // rather than just the count.
 func resultsString(pass *analysis.Pass, results *types.Tuple) string {
 	n := results.Len()
@@ -295,6 +299,10 @@ func isHTTPResponseWriter(t types.Type) bool {
 func isHTTPRequestPtr(t types.Type) bool {
 	ptr, ok := t.(*types.Pointer)
 	return ok && isNamedType(ptr.Elem(), "net/http", "Request")
+}
+
+func isError(t types.Type) bool {
+	return types.Identical(t, types.Universe.Lookup("error").Type())
 }
 
 func isHTTPHandler(t types.Type) bool {
