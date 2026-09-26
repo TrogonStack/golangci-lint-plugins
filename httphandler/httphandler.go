@@ -283,7 +283,7 @@ func resultsPos(fn *ast.FuncDecl) token.Pos {
 // a local type that happens to share a name with a net/http type has a
 // different Pkg, and does not match.
 func isNamedType(t types.Type, pkgPath, name string) bool {
-	named, ok := t.(*types.Named)
+	named, ok := types.Unalias(t).(*types.Named)
 	if !ok {
 		return false
 	}
@@ -297,7 +297,7 @@ func isHTTPResponseWriter(t types.Type) bool {
 }
 
 func isHTTPRequestPtr(t types.Type) bool {
-	ptr, ok := t.(*types.Pointer)
+	ptr, ok := types.Unalias(t).(*types.Pointer)
 	return ok && isNamedType(ptr.Elem(), "net/http", "Request")
 }
 
