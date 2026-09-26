@@ -18,7 +18,8 @@
   ],
   "packages": {
     ".": {
-      "component": "golangci-lint-plugins"
+      "component": "golangci-lint-plugins",
+      "release-as": "0.1.0"
     }
   },
   "plugins": [
