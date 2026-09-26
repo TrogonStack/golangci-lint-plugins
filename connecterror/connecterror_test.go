@@ -57,17 +57,20 @@ func TestNew(t *testing.T) {
 		replacements []string
 		want         error
 	}{
-		"a function in a module path":         {[]string{"github.com/acme/orders/rpcerr.NewError"}, nil},
-		"a function in a single-segment path": {[]string{"rpcerr.NewError"}, nil},
-		"no replacement":                      {nil, connecterror.ErrReplacementRequired},
-		"an empty entry":                      {[]string{""}, connecterror.ErrInvalidReplacement},
-		"no function name":                    {[]string{"github.com/acme/orders/rpcerr"}, connecterror.ErrInvalidReplacement},
-		"an unexported function":              {[]string{"github.com/acme/orders/rpcerr.newError"}, connecterror.ErrInvalidReplacement},
-		"a method rather than a function":     {[]string{"github.com/acme/orders/rpcerr.Builder.NewError"}, connecterror.ErrInvalidReplacement},
-		"no import path":                      {[]string{".NewError"}, connecterror.ErrInvalidReplacement},
-		"several functions":                   {[]string{"github.com/acme/orders/rpcerr.NewError", "github.com/acme/orders/autherr.NewError"}, nil},
-		"one bad function among several":      {[]string{"github.com/acme/orders/rpcerr.NewError", "github.com/acme/orders/autherr"}, connecterror.ErrInvalidReplacement},
-		"connect.NewError itself":             {[]string{"connectrpc.com/connect.NewError"}, connecterror.ErrInvalidReplacement},
+		"a function in a module path":              {[]string{"github.com/acme/orders/rpcerr.NewError"}, nil},
+		"a function in a single-segment path":      {[]string{"rpcerr.NewError"}, nil},
+		"no replacement":                           {nil, connecterror.ErrReplacementRequired},
+		"an empty entry":                           {[]string{""}, connecterror.ErrInvalidReplacement},
+		"no function name":                         {[]string{"github.com/acme/orders/rpcerr"}, connecterror.ErrInvalidReplacement},
+		"an unexported function":                   {[]string{"github.com/acme/orders/rpcerr.newError"}, connecterror.ErrInvalidReplacement},
+		"a method rather than a function":          {[]string{"github.com/acme/orders/rpcerr.Builder.NewError"}, connecterror.ErrInvalidReplacement},
+		"no import path":                           {[]string{".NewError"}, connecterror.ErrInvalidReplacement},
+		"several functions":                        {[]string{"github.com/acme/orders/rpcerr.NewError", "github.com/acme/orders/autherr.NewError"}, nil},
+		"one bad function among several":           {[]string{"github.com/acme/orders/rpcerr.NewError", "github.com/acme/orders/autherr"}, connecterror.ErrInvalidReplacement},
+		"connect.NewError under its previous path": {[]string{"github.com/bufbuild/connect-go.NewError"}, connecterror.ErrInvalidReplacement},
+		"another function of Connect":              {[]string{"connectrpc.com/connect.NewWireError"}, connecterror.ErrInvalidReplacement},
+		"Connect itself among several":             {[]string{"github.com/acme/orders/rpcerr.NewError", "connectrpc.com/connect.NewError"}, connecterror.ErrInvalidReplacement},
+		"connect.NewError itself":                  {[]string{"connectrpc.com/connect.NewError"}, connecterror.ErrInvalidReplacement},
 	}
 
 	for name, tt := range tests {
