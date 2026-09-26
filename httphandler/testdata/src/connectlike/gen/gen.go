@@ -8,4 +8,4 @@ type Request struct {
 
 type Response struct{}
 
-type CommitHandlerFunc func(*Request) (*Response, error)
+type PlaceOrderHandlerFunc func(*Request) (*Response, error)

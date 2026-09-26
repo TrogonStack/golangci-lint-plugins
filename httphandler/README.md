@@ -12,7 +12,7 @@ Checks the shape of a plain `net/http` handler package. A package declaring
   with `HandlerOptions` declared in the same package, for a handler that does.
 
 ```go
-package healthz
+package listorders
 
 import "net/http"
 
@@ -20,17 +20,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {}
 ```
 
 ```go
-package avatar
+package placeorder
 
 import "net/http"
 
 type HandlerOptions struct {
-	Store Store
+	Orders OrderRepository
 }
 
 func NewHandler(opts HandlerOptions) (http.Handler, error) {
-	if opts.Store == nil {
-		return nil, ErrStoreRequired
+	if opts.Orders == nil {
+		return nil, ErrOrderRepositoryRequired
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), nil
 }

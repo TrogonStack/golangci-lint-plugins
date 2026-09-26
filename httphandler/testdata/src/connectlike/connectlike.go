@@ -7,4 +7,4 @@ import "connectlike/gen"
 
 type Options struct{}
 
-func NewHandler(opts Options, extra int) gen.CommitHandlerFunc { return nil }
+func NewHandler(opts Options, extra int) gen.PlaceOrderHandlerFunc { return nil }
