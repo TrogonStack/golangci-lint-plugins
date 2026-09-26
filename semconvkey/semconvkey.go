@@ -3,7 +3,7 @@
 // being spelled by hand at the call site. go.opentelemetry.io and everything
 // under it is always allowed, so upstream semconv works with no
 // configuration; a project that declares its own names lists the packages
-// holding them in allowed-packages.
+// holding them in allowed-packages, each named to end in semconv.
 //
 // The reason is that an attribute key or a metric name is a contract in the
 // same way a protobuf field is: a dashboard, an alert or a query built
@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"path"
 	"regexp"
 	"strings"
 
@@ -87,7 +88,14 @@ var instrumentMethods = map[string]bool{
 // generatedHeader is the convention https://go.dev/s/generatedcode defines.
 var generatedHeader = regexp.MustCompile(generatedHeaderRaw)
 
-var ErrEmptyPackagePrefix = errors.New("allowed-packages entry is empty")
+var (
+	ErrEmptyPackagePrefix      = errors.New("allowed-packages entry is empty")
+	ErrPackagePrefixNotSemconv = errors.New("allowed-packages entry must be a package whose name ends in semconv")
+)
+
+// semconvSuffix is what an allowed package's name must end in, so a reader
+// can tell a package that declares names apart from one that only uses them.
+const semconvSuffix = "semconv"
 
 // PackagePrefix is an import path that, with everything under it, is allowed
 // to declare attribute keys and metric names.
@@ -96,6 +104,10 @@ type PackagePrefix string
 // covers reports whether path is the prefix itself or a package under it.
 func (p PackagePrefix) covers(path string) bool {
 	return path == string(p) || strings.HasPrefix(path, string(p)+"/")
+}
+
+func (p PackagePrefix) namedForSemconv() bool {
+	return strings.HasSuffix(path.Base(string(p)), semconvSuffix)
 }
 
 // Settings is what golangci-lint's custom linter settings decode into.
@@ -114,6 +126,9 @@ func New(settings Settings) (*analysis.Analyzer, error) {
 	for i, prefix := range settings.AllowedPackages {
 		if prefix == "" {
 			return nil, fmt.Errorf("%w: entry %d", ErrEmptyPackagePrefix, i)
+		}
+		if !prefix.namedForSemconv() {
+			return nil, fmt.Errorf("%w: %q", ErrPackagePrefixNotSemconv, prefix)
 		}
 		prefixes = append(prefixes, prefix)
 	}

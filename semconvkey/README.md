@@ -23,9 +23,9 @@ field or function result that package declares. A local copy does not count.
 
 | Setting            | Values                                                         | Default |
 | ------------------ | -------------------------------------------------------------- | ------- |
-| `allowed-packages` | Import paths that, with every package under them, may declare keys and names | none    |
+| `allowed-packages` | Import paths that, with every package under them, may declare keys and names. Each must name a package ending in `semconv`, such as `appsemconv` | none    |
 
-`go.opentelemetry.io` is always allowed.
+`go.opentelemetry.io` is always allowed. An entry whose last path segment does not end in `semconv` fails plugin load, so the package that declares a project's names reads as the project's own semconv wherever it is imported.
 
 ```yaml
 linters:
@@ -35,5 +35,5 @@ linters:
         type: module
         settings:
           allowed-packages:
-            - example.com/app/internal/telemetry
+            - example.com/app/internal/appsemconv
 ```

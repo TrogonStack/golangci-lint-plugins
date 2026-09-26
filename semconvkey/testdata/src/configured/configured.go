@@ -3,18 +3,18 @@
 package configured
 
 import (
-	"example.com/telemetry"
+	"example.com/appsemconv"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
 func Attrs(meter metric.Meter, v string) []attribute.KeyValue {
-	_, _ = meter.Int64Counter(telemetry.RequestCountName)
+	_, _ = meter.Int64Counter(appsemconv.RequestCountName)
 	return []attribute.KeyValue{
-		telemetry.TierKey.String(v),
-		telemetry.Tier(v),
-		attribute.Key(telemetry.TierName).String(v),
-		{Key: telemetry.TierKey, Value: v},
+		appsemconv.TierKey.String(v),
+		appsemconv.Tier(v),
+		attribute.Key(appsemconv.TierName).String(v),
+		{Key: appsemconv.TierKey, Value: v},
 	}
 }

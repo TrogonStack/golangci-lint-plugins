@@ -14,7 +14,7 @@ func TestAnalyzer(t *testing.T) {
 	testdata := analysistest.TestData()
 
 	configured, err := semconvkey.New(semconvkey.Settings{
-		AllowedPackages: []semconvkey.PackagePrefix{"example.com/telemetry"},
+		AllowedPackages: []semconvkey.PackagePrefix{"example.com/appsemconv"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestAnalyzer(t *testing.T) {
 		},
 		"allowed packages": {
 			analyzer: configured,
-			patterns: []string{"configured", "example.com/telemetry"},
+			patterns: []string{"configured", "example.com/appsemconv"},
 		},
 	}
 
@@ -55,9 +55,18 @@ func TestAnalyzer(t *testing.T) {
 
 func TestNewRejectsEmptyPackagePrefix(t *testing.T) {
 	_, err := semconvkey.New(semconvkey.Settings{
-		AllowedPackages: []semconvkey.PackagePrefix{"example.com/telemetry", ""},
+		AllowedPackages: []semconvkey.PackagePrefix{"example.com/appsemconv", ""},
 	})
 	if !errors.Is(err, semconvkey.ErrEmptyPackagePrefix) {
 		t.Fatalf("got %v, want %v", err, semconvkey.ErrEmptyPackagePrefix)
+	}
+}
+
+func TestNewRejectsPackagePrefixNotNamedForSemconv(t *testing.T) {
+	_, err := semconvkey.New(semconvkey.Settings{
+		AllowedPackages: []semconvkey.PackagePrefix{"example.com/appsemconv", "example.com/app/internal/telemetry"},
+	})
+	if !errors.Is(err, semconvkey.ErrPackagePrefixNotSemconv) {
+		t.Fatalf("got %v, want %v", err, semconvkey.ErrPackagePrefixNotSemconv)
 	}
 }

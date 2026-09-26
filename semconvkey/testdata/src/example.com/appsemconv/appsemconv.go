@@ -1,7 +1,7 @@
-// Package telemetry is a project's own home for the names semconv does not
+// Package appsemconv is a project's own home for the names semconv does not
 // have. It spells them itself, which is the one place that is allowed to once
 // it is listed in allowed-packages.
-package telemetry
+package appsemconv
 
 import "go.opentelemetry.io/otel/attribute"
 
