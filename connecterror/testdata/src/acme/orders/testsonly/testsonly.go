@@ -1,0 +1,3 @@
+package testsonly
+
+func Something() {}
