@@ -5,9 +5,9 @@
 // function that makes that decision, and a direct connect.NewError is a way
 // around it.
 //
-// The linter knows nothing about that function beyond where it lives: the
-// Replacement setting names it, the diagnostic points at it, and the package
-// declaring it is the one package allowed to call connect.NewError. Generated
+// The linter knows nothing about those functions beyond where they live: the
+// Replacements setting names them, the diagnostic points at them, and the
+// packages declaring them are the only ones allowed to call connect.NewError. Generated
 // files and _test.go files are skipped.
 package connecterror
 
@@ -24,10 +24,10 @@ import (
 
 // Doc is the analyzer's one-line description, shown by go vet -help and
 // golangci-lint's linter listing.
-const Doc = "reports connect.NewError outside the function configured to build Connect errors"
+const Doc = "reports connect.NewError outside the functions configured to build Connect errors"
 
 var (
-	ErrReplacementRequired = errors.New("replacement is required")
+	ErrReplacementRequired = errors.New("at least one replacement is required")
 	ErrInvalidReplacement  = errors.New("invalid replacement")
 )
 
@@ -70,18 +70,60 @@ func (f Func) String() string {
 	return f.PkgPath + "." + f.Name
 }
 
+// Replacements are the functions a codebase builds its Connect errors with,
+// in the order they were configured.
+type Replacements []Func
+
+// ParseReplacements reads each function with ParseFunc, keeping the first of
+// any function named twice.
+func ParseReplacements(ss []string) (Replacements, error) {
+	if len(ss) == 0 {
+		return nil, ErrReplacementRequired
+	}
+	var r Replacements
+	seen := map[Func]bool{}
+	for _, s := range ss {
+		f, err := ParseFunc(s)
+		if err != nil {
+			return nil, err
+		}
+		if !seen[f] {
+			seen[f] = true
+			r = append(r, f)
+		}
+	}
+	return r, nil
+}
+
+func (r Replacements) declaredIn(pkgPath string) bool {
+	for _, f := range r {
+		if f.PkgPath == pkgPath {
+			return true
+		}
+	}
+	return false
+}
+
+func (r Replacements) String() string {
+	names := make([]string, len(r))
+	for i, f := range r {
+		names[i] = f.String()
+	}
+	if len(names) == 1 {
+		return names[0]
+	}
+	return "one of " + strings.Join(names, ", ")
+}
+
 // Settings is what golangci-lint's custom linter settings decode into.
 type Settings struct {
-	Replacement string `json:"replacement"`
+	Replacements []string `json:"replacements"`
 }
 
 // New is connecterror configured by settings. There is no default: which
-// function builds a codebase's Connect errors is that codebase's decision.
+// functions build a codebase's Connect errors is that codebase's decision.
 func New(settings Settings) (*analysis.Analyzer, error) {
-	if settings.Replacement == "" {
-		return nil, ErrReplacementRequired
-	}
-	replacement, err := ParseFunc(settings.Replacement)
+	replacements, err := ParseReplacements(settings.Replacements)
 	if err != nil {
 		return nil, err
 	}
@@ -89,13 +131,13 @@ func New(settings Settings) (*analysis.Analyzer, error) {
 		Name: "connecterror",
 		Doc:  Doc,
 		Run: func(pass *analysis.Pass) (any, error) {
-			return run(pass, replacement)
+			return run(pass, replacements)
 		},
 	}, nil
 }
 
-func run(pass *analysis.Pass, replacement Func) (any, error) {
-	if pass.Pkg.Path() == replacement.PkgPath {
+func run(pass *analysis.Pass, replacements Replacements) (any, error) {
+	if replacements.declaredIn(pass.Pkg.Path()) {
 		return nil, nil
 	}
 
@@ -106,7 +148,7 @@ func run(pass *analysis.Pass, replacement Func) (any, error) {
 		ast.Inspect(f, func(n ast.Node) bool {
 			id, ok := n.(*ast.Ident)
 			if ok && isConnectNewError(pass.TypesInfo.Uses[id]) {
-				pass.Reportf(id.Pos(), "use %s instead of connect.NewError", replacement)
+				pass.Reportf(id.Pos(), "use %s instead of connect.NewError", replacements)
 			}
 			return true
 		})

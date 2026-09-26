@@ -12,7 +12,15 @@ import (
 func TestAnalyzer(t *testing.T) {
 	t.Parallel()
 
-	analyzer, err := connecterror.New(connecterror.Settings{Replacement: "acme/orders/rpcerr.NewError"})
+	analyzer, err := connecterror.New(connecterror.Settings{Replacements: []string{"acme/orders/rpcerr.NewError"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	several, err := connecterror.New(connecterror.Settings{Replacements: []string{
+		"acme/orders/rpcerr.NewError",
+		"acme/orders/autherr.NewError",
+		"acme/orders/rpcerr.NewError",
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,31 +43,39 @@ func TestAnalyzer(t *testing.T) {
 			analysistest.Run(t, analysistest.TestData(), analyzer, patterns...)
 		})
 	}
+
+	t.Run("every replacement's package may call connect.NewError, and the diagnostic names them all", func(t *testing.T) {
+		t.Parallel()
+		analysistest.Run(t, analysistest.TestData(), several, "acme/orders/rpcerr/...", "acme/orders/autherr/...", "acme/orders/several/...")
+	})
 }
 
 func TestNew(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		replacement string
-		want        error
+		replacements []string
+		want         error
 	}{
-		"a function in a module path":         {"github.com/acme/orders/rpcerr.NewError", nil},
-		"a function in a single-segment path": {"rpcerr.NewError", nil},
-		"no replacement":                      {"", connecterror.ErrReplacementRequired},
-		"no function name":                    {"github.com/acme/orders/rpcerr", connecterror.ErrInvalidReplacement},
-		"an unexported function":              {"github.com/acme/orders/rpcerr.newError", connecterror.ErrInvalidReplacement},
-		"a method rather than a function":     {"github.com/acme/orders/rpcerr.Builder.NewError", connecterror.ErrInvalidReplacement},
-		"no import path":                      {".NewError", connecterror.ErrInvalidReplacement},
-		"connect.NewError itself":             {"connectrpc.com/connect.NewError", connecterror.ErrInvalidReplacement},
+		"a function in a module path":         {[]string{"github.com/acme/orders/rpcerr.NewError"}, nil},
+		"a function in a single-segment path": {[]string{"rpcerr.NewError"}, nil},
+		"no replacement":                      {nil, connecterror.ErrReplacementRequired},
+		"an empty entry":                      {[]string{""}, connecterror.ErrInvalidReplacement},
+		"no function name":                    {[]string{"github.com/acme/orders/rpcerr"}, connecterror.ErrInvalidReplacement},
+		"an unexported function":              {[]string{"github.com/acme/orders/rpcerr.newError"}, connecterror.ErrInvalidReplacement},
+		"a method rather than a function":     {[]string{"github.com/acme/orders/rpcerr.Builder.NewError"}, connecterror.ErrInvalidReplacement},
+		"no import path":                      {[]string{".NewError"}, connecterror.ErrInvalidReplacement},
+		"several functions":                   {[]string{"github.com/acme/orders/rpcerr.NewError", "github.com/acme/orders/autherr.NewError"}, nil},
+		"one bad function among several":      {[]string{"github.com/acme/orders/rpcerr.NewError", "github.com/acme/orders/autherr"}, connecterror.ErrInvalidReplacement},
+		"connect.NewError itself":             {[]string{"connectrpc.com/connect.NewError"}, connecterror.ErrInvalidReplacement},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, err := connecterror.New(connecterror.Settings{Replacement: tt.replacement})
+			_, err := connecterror.New(connecterror.Settings{Replacements: tt.replacements})
 			if !errors.Is(err, tt.want) {
-				t.Fatalf("New(%q) error = %v, want %v", tt.replacement, err, tt.want)
+				t.Fatalf("New(%q) error = %v, want %v", tt.replacements, err, tt.want)
 			}
 		})
 	}
