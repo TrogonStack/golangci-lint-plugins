@@ -41,6 +41,8 @@ func TestAnalyzer(t *testing.T) {
 				"semconvok",
 				"conversion",
 				"compositelit",
+				"dotimport",
+				"alias",
 				"metricname",
 				"unconfigured",
 				"generated",

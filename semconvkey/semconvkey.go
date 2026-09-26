@@ -223,11 +223,19 @@ func (c checker) checkCall(call *ast.CallExpr) {
 		return
 	}
 
-	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok {
+	// A dot import leaves a package function as a bare identifier, so the
+	// callee is resolved from either shape; only a method has a receiver.
+	var callee *ast.Ident
+	var recv ast.Expr
+	switch fun := ast.Unparen(call.Fun).(type) {
+	case *ast.Ident:
+		callee = fun
+	case *ast.SelectorExpr:
+		callee, recv = fun.Sel, fun.X
+	default:
 		return
 	}
-	fn, ok := c.pass.TypesInfo.Uses[sel.Sel].(*types.Func)
+	fn, ok := c.pass.TypesInfo.Uses[callee].(*types.Func)
 	if !ok || fn.Pkg() == nil {
 		return
 	}
@@ -244,7 +252,7 @@ func (c checker) checkCall(call *ast.CallExpr) {
 			}
 			return
 		}
-		if !c.isKeyConversion(sel.X) && !c.fromAllowed(sel.X) {
+		if recv != nil && !c.isKeyConversion(recv) && !c.fromAllowed(recv) {
 			c.pass.Reportf(call.Pos(), "%s", keyMessage)
 		}
 	case metricPackage:
@@ -380,12 +388,14 @@ func takesRawKey(sig *types.Signature) bool {
 	if sig.Params().Len() == 0 {
 		return false
 	}
-	basic, ok := sig.Params().At(0).Type().(*types.Basic)
+	basic, ok := types.Unalias(sig.Params().At(0).Type()).(*types.Basic)
 	return ok && basic.Kind() == types.String
 }
 
+// isAttributeType sees through an alias, so type KV = attribute.KeyValue is
+// held to the same rules as attribute.KeyValue itself.
 func isAttributeType(t types.Type, name string) bool {
-	named, ok := t.(*types.Named)
+	named, ok := types.Unalias(t).(*types.Named)
 	if !ok {
 		return false
 	}
