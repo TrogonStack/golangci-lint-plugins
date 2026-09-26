@@ -10,9 +10,9 @@
 // is a package that declares a handler whose type is one of the generated
 // struct's handler func types. That keeps the rule free of any fixed root
 // directory, and leaves helper packages beside the rpc packages alone. The
-// path and package name spell the service and rpc in one Naming, snake_case
-// unless configured otherwise: echo_service/echo_stream for the EchoStream rpc
-// of EchoService, or echoservice/echostream under Lowercase.
+// path and package name spell the service and rpc in one Naming, lowercase
+// unless configured otherwise: echoservice/echostream for the EchoStream rpc
+// of EchoService, or echo_service/echo_stream under SnakeCase.
 //
 // An rpc package declares exactly one of the two. Handler is the handler
 // itself, for an rpc that needs nothing from the process around it.
@@ -43,23 +43,24 @@ const Doc = "checks that Connect rpc handlers live in <service>/<rpc> packages n
 type Naming string
 
 const (
-	// SnakeCase splits words with underscores: echo_service/echo_stream. It is
-	// the default, because a name of several words run together is hard to
-	// read back.
+	// SnakeCase splits words with underscores: echo_service/echo_stream, for a
+	// codebase that prefers a name of several words be easy to read back over
+	// Go's own package naming advice.
 	SnakeCase Naming = "snake_case"
-	// Lowercase runs the words together: echoservice/echostream, the spelling
-	// Go's own package naming advice asks for.
+	// Lowercase runs the words together: echoservice/echostream. It is the
+	// default, because it is the spelling Go's own package naming advice asks
+	// for.
 	Lowercase Naming = "lowercase"
 )
 
 var ErrUnknownNaming = errors.New("unknown naming")
 
-// orDefault is n, or SnakeCase when n is unset, or an error when n is neither
+// orDefault is n, or Lowercase when n is unset, or an error when n is neither
 // of the namings the linter knows.
 func (n Naming) orDefault() (Naming, error) {
 	switch n {
 	case "":
-		return SnakeCase, nil
+		return Lowercase, nil
 	case SnakeCase, Lowercase:
 		return n, nil
 	default:
@@ -82,7 +83,7 @@ type Settings struct {
 // Analyzer is connectrpclayout with the default settings, for any analysis
 // driver: golangci-lint through connectrpclayout/plugin, or a singlechecker
 // binary.
-var Analyzer = newAnalyzer(SnakeCase)
+var Analyzer = newAnalyzer(Lowercase)
 
 // New is connectrpclayout configured by settings.
 func New(settings Settings) (*analysis.Analyzer, error) {

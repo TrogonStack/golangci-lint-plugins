@@ -11,15 +11,17 @@ A package declaring a handler for one of the generated service struct's
   handler itself) or `NewHandler` (a constructor returning it, taking whatever
   parameters it needs), never both.
 
-Names are spelled in snake_case by default, so the `EchoStream` rpc of
-`EchoService` lives in `echo_service/echo_stream/echo_stream.go`. Initialisms
-stay one word: `GetHTTPStatus` is `get_http_status`.
+Names are spelled in lowercase by default, the way Go's package naming advice
+asks, so the `EchoStream` rpc of `EchoService` lives in
+`echoservice/echostream/echostream.go`. Under `snake_case` it lives in
+`echo_service/echo_stream/echo_stream.go` instead, and initialisms stay one
+word: `GetHTTPStatus` is `get_http_status`.
 
 ## Settings
 
 | Setting  | Values                                 | Default      |
 | -------- | -------------------------------------- | ------------ |
-| `naming` | `snake_case` (`echo_service/echo_stream`), `lowercase` (`echoservice/echostream`) | `snake_case` |
+| `naming` | `snake_case` (`echo_service/echo_stream`), `lowercase` (`echoservice/echostream`) | `lowercase`  |
 
 ```yaml
 linters:
@@ -28,5 +30,5 @@ linters:
       connectrpclayout:
         type: module
         settings:
-          naming: lowercase
+          naming: snake_case
 ```
