@@ -14,7 +14,11 @@ Outside an allowed package, it reports:
   package;
 - `meter.Int64Counter(name)` and the other `metric.Meter` instrument methods,
   unless `name` comes from an allowed package, or whatever `name` is when
-  `generated-instruments` is set.
+  `generated-instruments` is set;
+- a composite literal such as `appsemconv.TierAttr{}` of a struct type an
+  `allowed-packages` entry declares with only unexported fields, which can
+  only ever be its zero value; the package's own constructor is the way to
+  build one.
 
 A value comes from an allowed package when it names a constant, variable,
 field or function result that package declares. A local copy does not count.

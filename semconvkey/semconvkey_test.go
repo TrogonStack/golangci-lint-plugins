@@ -49,7 +49,7 @@ func TestAnalyzer(t *testing.T) {
 		},
 		"allowed packages": {
 			analyzer: configured,
-			patterns: []string{"configured", "example.com/appsemconv"},
+			patterns: []string{"configured", "zeroliteral", "example.com/appsemconv"},
 		},
 		"generated instruments": {
 			analyzer: generated,

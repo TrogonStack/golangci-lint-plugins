@@ -19,3 +19,13 @@ func Tier(v string) attribute.KeyValue { return attribute.String("app.user.tier"
 func NewRequestCount(meter metric.Meter) (metric.Int64Counter, error) {
 	return meter.Int64Counter(RequestCountName)
 }
+
+type TierAttr struct{ value string }
+
+func NewTierAttr(value string) TierAttr { return TierAttr{value: value} }
+
+func (v TierAttr) KeyValue() attribute.KeyValue { return TierKey.String(v.value) }
+
+type Options struct{ Prefix string }
+
+type Marker struct{}

@@ -23,7 +23,18 @@
 //   - an attribute.KeyValue composite literal, unless its Key does;
 //   - a metric.Meter method that creates an instrument, such as
 //     meter.Int64Counter(name), unless the name does, or whatever the name
-//     is when generated-instruments is set.
+//     is when generated-instruments is set;
+//   - a composite literal of a struct type a package listed in
+//     allowed-packages declares, when every field of that type is
+//     unexported, such as appsemconv.TierAttr{}.
+//
+// A literal of such a type written outside its package can only ever be the
+// zero value, since there is no field it could set: an attribute with its
+// key and an empty value, or an instrument that records nothing. The
+// package's own constructor is the only way to get one that means something,
+// and a parameter typed as one is only required if the zero value cannot be
+// passed in its place. go.opentelemetry.io is left out of this rule, since
+// it declares many such types whose zero value is fine to build.
 //
 // A value comes from an allowed package when it is a constant, variable,
 // field or function result that package declares, named directly at the use.
@@ -64,6 +75,7 @@ const (
 	rawKeyMessage      = "attribute.%s takes the key as a raw string; call the method of a Key declared in go.opentelemetry.io/otel/semconv or a package listed in allowed-packages instead"
 	metricNameMessage  = "an OpenTelemetry metric name must come from go.opentelemetry.io/otel/semconv or a package listed in allowed-packages, not be spelled at the call site"
 	instrumentMessage  = "an OpenTelemetry metric instrument must be created by a package listed in allowed-packages, so its name, unit and required attributes come with it"
+	zeroValueMessage   = "%s has no exported fields, so a composite literal of it can only be its zero value; build it with the constructor %s declares"
 	generatedHeaderRaw = `^// Code generated .* DO NOT EDIT\.$`
 )
 
@@ -129,7 +141,7 @@ var Analyzer = newAnalyzer(checker{allowed: allowed{upstream}})
 
 // New is semconvkey configured by settings.
 func New(settings Settings) (*analysis.Analyzer, error) {
-	prefixes := allowed{upstream}
+	var configured allowed
 	for i, prefix := range settings.AllowedPackages {
 		if prefix == "" {
 			return nil, fmt.Errorf("%w: entry %d", ErrEmptyPackagePrefix, i)
@@ -137,9 +149,13 @@ func New(settings Settings) (*analysis.Analyzer, error) {
 		if !prefix.namedForSemconv() {
 			return nil, fmt.Errorf("%w: %q", ErrPackagePrefixNotSemconv, prefix)
 		}
-		prefixes = append(prefixes, prefix)
+		configured = append(configured, prefix)
 	}
-	return newAnalyzer(checker{allowed: prefixes, generatedInstruments: settings.GeneratedInstruments}), nil
+	return newAnalyzer(checker{
+		allowed:              append(allowed{upstream}, configured...),
+		configured:           configured,
+		generatedInstruments: settings.GeneratedInstruments,
+	}), nil
 }
 
 type allowed []PackagePrefix
@@ -172,6 +188,7 @@ func newAnalyzer(config checker) *analysis.Analyzer {
 type checker struct {
 	pass                 *analysis.Pass
 	allowed              allowed
+	configured           allowed
 	generatedInstruments bool
 }
 
@@ -263,7 +280,14 @@ func (c checker) typeOfCallee(call *ast.CallExpr) types.Type {
 }
 
 func (c checker) checkCompositeLit(lit *ast.CompositeLit) {
-	if !isAttributeType(c.pass.TypesInfo.TypeOf(lit), "KeyValue") {
+	t := c.pass.TypesInfo.TypeOf(lit)
+
+	if named, ok := c.opaqueConfiguredType(t); ok {
+		c.pass.Reportf(lit.Pos(), zeroValueMessage, named.Obj().Name(), named.Obj().Pkg().Name())
+		return
+	}
+
+	if !isAttributeType(t, "KeyValue") {
 		return
 	}
 
@@ -271,6 +295,29 @@ func (c checker) checkCompositeLit(lit *ast.CompositeLit) {
 	if key == nil || !c.fromAllowed(key) {
 		c.pass.Reportf(lit.Pos(), "%s", keyMessage)
 	}
+}
+
+// opaqueConfiguredType reports whether t is a struct type declared in a
+// configured allowed package with at least one field and none exported. An
+// empty struct is left alone: its zero value is the only value it has.
+func (c checker) opaqueConfiguredType(t types.Type) (*types.Named, bool) {
+	named, ok := types.Unalias(t).(*types.Named)
+	if !ok || !c.configured.covers(named.Obj().Pkg()) {
+		return nil, false
+	}
+
+	st, ok := named.Underlying().(*types.Struct)
+	if !ok || st.NumFields() == 0 {
+		return nil, false
+	}
+
+	for field := range st.Fields() {
+		if field.Exported() {
+			return nil, false
+		}
+	}
+
+	return named, true
 }
 
 // compositeKey is the expression a KeyValue literal sets its Key to, keyed or
