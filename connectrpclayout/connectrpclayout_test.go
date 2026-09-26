@@ -15,7 +15,7 @@ func TestAnalyzer(t *testing.T) {
 
 	testdata := analysistest.TestData()
 
-	lowercase, err := connectrpclayout.New(connectrpclayout.Settings{Naming: connectrpclayout.Lowercase})
+	snakeCase, err := connectrpclayout.New(connectrpclayout.Settings{Naming: connectrpclayout.SnakeCase})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,18 +24,18 @@ func TestAnalyzer(t *testing.T) {
 		analyzer *analysis.Analyzer
 		patterns []string
 	}{
-		"a snake_case layout reports nothing by default":       {connectrpclayout.Analyzer, []string{"snake/..."}},
-		"a lowercase layout is reported by default":            {connectrpclayout.Analyzer, []string{"joined/..."}},
-		"a package named apart from its directory is reported": {connectrpclayout.Analyzer, []string{"mixed/..."}},
-		"a misplaced underscore is reported":                   {connectrpclayout.Analyzer, []string{"misspelled/..."}},
-		"a lowercase layout reports nothing under Lowercase":   {lowercase, []string{"good/..."}},
-		"a package handing a handler on is not an rpc package": {lowercase, []string{"wiring/..."}},
-		"an rpc package named for the wrong rpc is reported":   {lowercase, []string{"badpkgname/..."}},
-		"an rpc package at the wrong path is reported":         {lowercase, []string{"wrongpath/..."}},
-		"a handler under another name is reported":             {lowercase, []string{"misnamed/..."}},
-		"the handler declared in the wrong file is reported":   {lowercase, []string{"wrongfile/..."}},
-		"an rpc package declaring both forms is reported":      {lowercase, []string{"bothforms/..."}},
-		"declarations in _test.go files are skipped":           {lowercase, []string{"testskip/..."}},
+		"a lowercase layout reports nothing by default":        {connectrpclayout.Analyzer, []string{"good/..."}},
+		"a package handing a handler on is not an rpc package": {connectrpclayout.Analyzer, []string{"wiring/..."}},
+		"an rpc package named for the wrong rpc is reported":   {connectrpclayout.Analyzer, []string{"badpkgname/..."}},
+		"an rpc package at the wrong path is reported":         {connectrpclayout.Analyzer, []string{"wrongpath/..."}},
+		"a handler under another name is reported":             {connectrpclayout.Analyzer, []string{"misnamed/..."}},
+		"the handler declared in the wrong file is reported":   {connectrpclayout.Analyzer, []string{"wrongfile/..."}},
+		"an rpc package declaring both forms is reported":      {connectrpclayout.Analyzer, []string{"bothforms/..."}},
+		"declarations in _test.go files are skipped":           {connectrpclayout.Analyzer, []string{"testskip/..."}},
+		"a snake_case layout reports nothing under SnakeCase":  {snakeCase, []string{"snake/..."}},
+		"a lowercase layout is reported under SnakeCase":       {snakeCase, []string{"joined/..."}},
+		"a package named apart from its directory is reported": {snakeCase, []string{"mixed/..."}},
+		"a misplaced underscore is reported":                   {snakeCase, []string{"misspelled/..."}},
 	}
 
 	for name, tt := range tests {
