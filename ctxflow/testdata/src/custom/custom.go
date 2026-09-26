@@ -65,3 +65,20 @@ func receivers(c Cache, o Outer, w Wrapped, l List[int]) {
 	_ = Map(1)      // want `^Map drops the context; call MapContext`
 	l.Push(1)       // want `\(List\[T\]\).Push drops the context; call PushContext`
 }
+
+type Registry struct{}
+
+func (Registry) Find[T any](key string) T                             { var v T; return v }
+func (Registry) FindContext[U any](ctx context.Context, key string) U { var v U; return v }
+
+func (Registry) Pair[K, V any](k K) V                             { var v V; return v }
+func (Registry) PairContext[A, B any](ctx context.Context, k A) B { var v B; return v }
+
+func (Registry) Echo[T any](v T) T                             { return v }
+func (Registry) EchoContext[U any](ctx context.Context, v U) U { return v }
+
+func genericMethods(r Registry) {
+	_ = r.Find[int]("a")         // want `\(Registry\).Find drops the context; call FindContext`
+	_ = r.Pair[string, int]("a") // want `\(Registry\).Pair drops the context; call PairContext`
+	_ = r.Echo(1)                // want `\(Registry\).Echo drops the context; call EchoContext`
+}

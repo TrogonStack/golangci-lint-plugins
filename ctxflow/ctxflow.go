@@ -195,7 +195,14 @@ type receiver struct {
 // pointer-receiver LoadContext is no replacement for Load on a value that is
 // not addressable, such as the result of a call.
 func receiverAt(pass *analysis.Pass, call *ast.CallExpr) receiver {
-	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	fun := ast.Unparen(call.Fun)
+	switch index := fun.(type) {
+	case *ast.IndexExpr:
+		fun = ast.Unparen(index.X)
+	case *ast.IndexListExpr:
+		fun = ast.Unparen(index.X)
+	}
+	sel, ok := fun.(*ast.SelectorExpr)
 	if !ok {
 		return receiver{}
 	}
