@@ -3,7 +3,10 @@
 // it is listed in allowed-packages.
 package appsemconv
 
-import "go.opentelemetry.io/otel/attribute"
+import (
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+)
 
 const TierKey = attribute.Key("app.user.tier")
 
@@ -12,3 +15,7 @@ const TierName = "app.user.tier"
 const RequestCountName = "app.request.count"
 
 func Tier(v string) attribute.KeyValue { return attribute.String("app.user.tier", v) }
+
+func NewRequestCount(meter metric.Meter) (metric.Int64Counter, error) {
+	return meter.Int64Counter(RequestCountName)
+}

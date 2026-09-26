@@ -13,7 +13,8 @@ Outside an allowed package, it reports:
 - an `attribute.KeyValue{...}` literal, unless its `Key` comes from an allowed
   package;
 - `meter.Int64Counter(name)` and the other `metric.Meter` instrument methods,
-  unless `name` comes from an allowed package.
+  unless `name` comes from an allowed package, or whatever `name` is when
+  `generated-instruments` is set.
 
 A value comes from an allowed package when it names a constant, variable,
 field or function result that package declares. A local copy does not count.
@@ -24,6 +25,7 @@ field or function result that package declares. A local copy does not count.
 | Setting            | Values                                                         | Default |
 | ------------------ | -------------------------------------------------------------- | ------- |
 | `allowed-packages` | Import paths that, with every package under them, may declare keys and names. Each must name a package ending in `semconv`, such as `appsemconv` | none    |
+| `generated-instruments` | `true` to report every instrument created outside an allowed package, for projects whose allowed packages build instruments, such as ones Weaver generates, rather than only name them | `false` |
 
 `go.opentelemetry.io` is always allowed. An entry whose last path segment does not end in `semconv` fails plugin load, so the package that declares a project's names reads as the project's own semconv wherever it is imported.
 
@@ -36,4 +38,5 @@ linters:
         settings:
           allowed-packages:
             - example.com/app/internal/appsemconv
+          generated-instruments: true
 ```

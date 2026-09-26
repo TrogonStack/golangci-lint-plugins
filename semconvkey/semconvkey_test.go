@@ -20,6 +20,14 @@ func TestAnalyzer(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	generated, err := semconvkey.New(semconvkey.Settings{
+		AllowedPackages:      []semconvkey.PackagePrefix{"example.com/appsemconv"},
+		GeneratedInstruments: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	tests := map[string]struct {
 		analyzer *analysis.Analyzer
 		patterns []string
@@ -42,6 +50,10 @@ func TestAnalyzer(t *testing.T) {
 		"allowed packages": {
 			analyzer: configured,
 			patterns: []string{"configured", "example.com/appsemconv"},
+		},
+		"generated instruments": {
+			analyzer: generated,
+			patterns: []string{"handrolled", "example.com/appsemconv"},
 		},
 	}
 

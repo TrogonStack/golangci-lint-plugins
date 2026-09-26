@@ -22,7 +22,8 @@
 //     package;
 //   - an attribute.KeyValue composite literal, unless its Key does;
 //   - a metric.Meter method that creates an instrument, such as
-//     meter.Int64Counter(name), unless the name does.
+//     meter.Int64Counter(name), unless the name does, or whatever the name
+//     is when generated-instruments is set.
 //
 // A value comes from an allowed package when it is a constant, variable,
 // field or function result that package declares, named directly at the use.
@@ -62,6 +63,7 @@ const (
 	keyMessage         = "an OpenTelemetry attribute key must come from go.opentelemetry.io/otel/semconv or a package listed in allowed-packages, not be spelled at the call site"
 	rawKeyMessage      = "attribute.%s takes the key as a raw string; call the method of a Key declared in go.opentelemetry.io/otel/semconv or a package listed in allowed-packages instead"
 	metricNameMessage  = "an OpenTelemetry metric name must come from go.opentelemetry.io/otel/semconv or a package listed in allowed-packages, not be spelled at the call site"
+	instrumentMessage  = "an OpenTelemetry metric instrument must be created by a package listed in allowed-packages, so its name, unit and required attributes come with it"
 	generatedHeaderRaw = `^// Code generated .* DO NOT EDIT\.$`
 )
 
@@ -113,12 +115,17 @@ func (p PackagePrefix) namedForSemconv() bool {
 // Settings is what golangci-lint's custom linter settings decode into.
 type Settings struct {
 	AllowedPackages []PackagePrefix `json:"allowed-packages"`
+
+	// GeneratedInstruments reports every instrument created outside an
+	// allowed package, whatever its name, for a project whose allowed
+	// packages build its instruments rather than only naming them.
+	GeneratedInstruments bool `json:"generated-instruments"`
 }
 
 // Analyzer is semconvkey with the default settings, allowing only
 // go.opentelemetry.io, for any analysis driver: golangci-lint through
 // semconvkey/plugin, or a singlechecker binary.
-var Analyzer = newAnalyzer(allowed{upstream})
+var Analyzer = newAnalyzer(checker{allowed: allowed{upstream}})
 
 // New is semconvkey configured by settings.
 func New(settings Settings) (*analysis.Analyzer, error) {
@@ -132,7 +139,7 @@ func New(settings Settings) (*analysis.Analyzer, error) {
 		}
 		prefixes = append(prefixes, prefix)
 	}
-	return newAnalyzer(prefixes), nil
+	return newAnalyzer(checker{allowed: prefixes, generatedInstruments: settings.GeneratedInstruments}), nil
 }
 
 type allowed []PackagePrefix
@@ -149,12 +156,13 @@ func (a allowed) covers(pkg *types.Package) bool {
 	return false
 }
 
-func newAnalyzer(prefixes allowed) *analysis.Analyzer {
+func newAnalyzer(config checker) *analysis.Analyzer {
 	return &analysis.Analyzer{
 		Name: "semconvkey",
 		Doc:  Doc,
 		Run: func(pass *analysis.Pass) (any, error) {
-			c := checker{pass: pass, allowed: prefixes}
+			c := config
+			c.pass = pass
 			c.run()
 			return nil, nil
 		},
@@ -162,8 +170,9 @@ func newAnalyzer(prefixes allowed) *analysis.Analyzer {
 }
 
 type checker struct {
-	pass    *analysis.Pass
-	allowed allowed
+	pass                 *analysis.Pass
+	allowed              allowed
+	generatedInstruments bool
 }
 
 func (c checker) run() {
@@ -222,7 +231,14 @@ func (c checker) checkCall(call *ast.CallExpr) {
 			c.pass.Reportf(call.Pos(), "%s", keyMessage)
 		}
 	case metricPackage:
-		if instrumentMethods[fn.Name()] && len(call.Args) > 0 && !c.fromAllowed(call.Args[0]) {
+		if !instrumentMethods[fn.Name()] {
+			return
+		}
+		if c.generatedInstruments {
+			c.pass.Reportf(call.Pos(), "%s", instrumentMessage)
+			return
+		}
+		if len(call.Args) > 0 && !c.fromAllowed(call.Args[0]) {
 			c.pass.Reportf(call.Pos(), "%s", metricNameMessage)
 		}
 	}
