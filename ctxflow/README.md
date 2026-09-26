@@ -6,9 +6,14 @@ being dropped. It reports:
 - a call to `F` when `F` takes no context but its package or receiver declares
   `FContext` or `FWithContext` taking a `context.Context` first and otherwise
   the same parameters and results, such as `slog.Info`, `logger.Warn`,
-  `db.Query`, `exec.Command` or `http.NewRequest`;
+  `db.Query`, `exec.Command` or `http.NewRequest`. The sibling must be
+  declared on the same type and callable on the same operand, so a method
+  promoted from an embedded field, or a pointer-receiver sibling of a call on
+  a value that is not addressable, is not suggested;
 - any use of `context.Background` or `context.TODO` outside `func main` in
-  `package main`, a `func init`, or `TestMain`.
+  `package main`, a `func init`, `TestMain`, or an `Example` function. A
+  function literal inside one of those is still checked, since it can capture
+  the context its enclosing function built.
 
 A log record written without the context is not attached to the trace it
 happened under, and a query or request sent without it outlives the caller

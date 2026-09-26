@@ -10,7 +10,8 @@
 //     slog.InfoContext, (*sql.DB).Query next to QueryContext, or
 //     http.NewRequest next to NewRequestWithContext;
 //   - any use of context.Background or context.TODO outside the roots of a
-//     program: func main in package main, a func init, and TestMain.
+//     program: func main in package main, a func init, TestMain, and an
+//     Example function, not counting a function literal inside one.
 //
 // The reason is that a context carries what a call is part of: its
 // deadline, its cancellation, and the trace and request values an
@@ -78,27 +79,38 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 		testFile := strings.HasSuffix(pass.Fset.Position(file.Pos()).Filename, "_test.go")
 		for _, decl := range file.Decls {
-			root := isRoot(pass, decl, testFile)
-			ast.Inspect(decl, func(n ast.Node) bool {
-				switch n := n.(type) {
-				case *ast.CallExpr:
-					checkSibling(pass, n)
-				case *ast.Ident:
-					if !root {
-						checkFreshRoot(pass, n)
-					}
-				}
-				return true
-			})
+			inspect(pass, decl, isRoot(pass, decl, testFile))
 		}
 	}
 	return nil, nil
 }
 
+// inspect checks node, exempting it from the fresh-root rule when root is
+// set. A function literal inside a root is checked as if it were not one,
+// since it can capture the context its root has already built.
+func inspect(pass *analysis.Pass, node ast.Node, root bool) {
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			if root {
+				inspect(pass, n, false)
+				return false
+			}
+		case *ast.CallExpr:
+			checkSibling(pass, n)
+		case *ast.Ident:
+			if !root {
+				checkFreshRoot(pass, n)
+			}
+		}
+		return true
+	})
+}
+
 // isRoot reports whether decl is where a program starts with no context to
 // inherit: func main in package main, a func init in any package, or a
-// test binary's TestMain, whose *testing.M, unlike *testing.T, has no
-// Context method to ask.
+// test binary's TestMain or Example function, which unlike a test or a
+// benchmark are given no *testing.T or *testing.B to ask for one.
 func isRoot(pass *analysis.Pass, decl ast.Decl, testFile bool) bool {
 	fn, ok := decl.(*ast.FuncDecl)
 	if !ok || fn.Recv != nil {
@@ -112,7 +124,7 @@ func isRoot(pass *analysis.Pass, decl ast.Decl, testFile bool) bool {
 	case "TestMain":
 		return testFile
 	}
-	return false
+	return testFile && strings.HasPrefix(fn.Name.Name, "Example")
 }
 
 // checkFreshRoot reports ident when it names context.Background or
@@ -136,7 +148,16 @@ func checkSibling(pass *analysis.Pass, call *ast.CallExpr) {
 	if takesContext(sig) {
 		return
 	}
-	sibling := findSibling(fn, sig)
+	recv := receiverAt(pass, call)
+	if sig.Recv() != nil && recv.typ != nil {
+		// Resolved through the receiver as written, a method of a generic type
+		// comes back instantiated, the same as the sibling lookup returns it.
+		obj, _, _ := types.LookupFieldOrMethod(recv.typ, true, fn.Pkg(), fn.Name())
+		if self, ok := obj.(*types.Func); ok {
+			sig = self.Type().(*types.Signature)
+		}
+	}
+	sibling := findSibling(fn, sig, recv)
 	if sibling == nil {
 		return
 	}
@@ -149,24 +170,98 @@ func checkSibling(pass *analysis.Pass, call *ast.CallExpr) {
 // or results differ is a different operation that happens to share a
 // prefix, such as signal.Notify and signal.NotifyContext, and is not one fn
 // could be swapped for.
-func findSibling(fn *types.Func, sig *types.Signature) *types.Func {
+func findSibling(fn *types.Func, sig *types.Signature, recv receiver) *types.Func {
 	for _, suffix := range contextSuffixes {
-		candidate := lookup(fn, sig, fn.Name()+suffix)
-		if candidate != nil && isContextVariant(sig, candidate.Type().(*types.Signature)) {
+		candidate := lookup(fn, sig, recv, fn.Name()+suffix)
+		if candidate == nil {
+			continue
+		}
+		candidateSig := instantiateLike(sig, candidate.Type().(*types.Signature))
+		if candidateSig != nil && isContextVariant(sig, candidateSig) {
 			return candidate
 		}
 	}
 	return nil
 }
 
-func lookup(fn *types.Func, sig *types.Signature, name string) *types.Func {
-	if recv := sig.Recv(); recv != nil {
-		obj, _, _ := types.LookupFieldOrMethod(recv.Type(), true, fn.Pkg(), name)
-		candidate, _ := obj.(*types.Func)
+// receiver is the operand a method is called on, as the call site has it.
+type receiver struct {
+	typ         types.Type
+	addressable bool
+}
+
+// receiverAt returns the receiver of call as written, so that a sibling is
+// only suggested when it could be called on that same operand: a
+// pointer-receiver LoadContext is no replacement for Load on a value that is
+// not addressable, such as the result of a call.
+func receiverAt(pass *analysis.Pass, call *ast.CallExpr) receiver {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return receiver{}
+	}
+	selection, ok := pass.TypesInfo.Selections[sel]
+	if !ok {
+		return receiver{}
+	}
+	return receiver{
+		typ:         selection.Recv(),
+		addressable: selection.Kind() == types.MethodVal && pass.TypesInfo.Types[sel.X].Addressable(),
+	}
+}
+
+// lookup returns the function or method named name beside fn. A method is
+// only accepted when it is declared on fn's own receiver type, so that a
+// method promoted from an embedded field is never offered as the sibling of
+// one the outer type declares itself.
+func lookup(fn *types.Func, sig *types.Signature, recv receiver, name string) *types.Func {
+	if sig.Recv() == nil {
+		candidate, _ := fn.Pkg().Scope().Lookup(name).(*types.Func)
 		return candidate
 	}
-	candidate, _ := fn.Pkg().Scope().Lookup(name).(*types.Func)
+	if recv.typ == nil {
+		return nil
+	}
+	obj, _, _ := types.LookupFieldOrMethod(recv.typ, recv.addressable, fn.Pkg(), name)
+	candidate, ok := obj.(*types.Func)
+	if !ok || !types.Identical(receiverBase(fn), receiverBase(candidate)) {
+		return nil
+	}
 	return candidate
+}
+
+func receiverBase(fn *types.Func) types.Type {
+	t := fn.Type().(*types.Signature).Recv().Type()
+	if pointer, ok := t.(*types.Pointer); ok {
+		t = pointer.Elem()
+	}
+	if named, ok := types.Unalias(t).(*types.Named); ok {
+		return named.Origin()
+	}
+	return t
+}
+
+// instantiateLike returns candidate with its type parameters replaced by
+// sig's, so that a generic F and FContext compare equal when they are the
+// same shape. Each declares its own type parameters, which are never
+// identical to one another as they stand. It returns nil when the two do not
+// declare the same number of them.
+func instantiateLike(sig, candidate *types.Signature) *types.Signature {
+	tparams := sig.TypeParams()
+	if tparams.Len() != candidate.TypeParams().Len() {
+		return nil
+	}
+	if tparams.Len() == 0 {
+		return candidate
+	}
+	args := make([]types.Type, 0, tparams.Len())
+	for tparam := range tparams.TypeParams() {
+		args = append(args, tparam)
+	}
+	instance, err := types.Instantiate(nil, candidate, args, false)
+	if err != nil {
+		return nil
+	}
+	return instance.(*types.Signature)
 }
 
 func isContextVariant(sig, candidate *types.Signature) bool {

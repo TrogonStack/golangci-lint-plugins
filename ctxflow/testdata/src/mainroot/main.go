@@ -5,7 +5,7 @@ import "context"
 func main() {
 	ctx := context.Background()
 	go func() {
-		_ = context.TODO()
+		_ = context.TODO() // want `context.TODO starts a new context`
 	}()
 	_ = ctx
 }

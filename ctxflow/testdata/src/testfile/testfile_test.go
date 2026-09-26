@@ -15,3 +15,7 @@ func TestSomething(t *testing.T) {
 	_ = context.Background() // want `context.Background starts a new context`
 	_ = t.Context()
 }
+
+func ExampleSomething() {
+	_ = context.Background()
+}
