@@ -79,12 +79,12 @@ func run(pass *analysis.Pass) (any, error) {
 		return nil, nil
 	}
 
-	handler := findTopLevelDecl(pass, nonTestFiles, handlerName)
-	constructor := findTopLevelDecl(pass, nonTestFiles, newHandlerName)
+	handler := inScope(findTopLevelDecl(pass, nonTestFiles, handlerName))
+	constructor := inScope(findTopLevelDecl(pass, nonTestFiles, newHandlerName))
 
-	// Neither declared means this package is out of scope: the rule only
-	// governs a package that already claims to have a handler.
-	if !mentionsHTTP(handler) && !mentionsHTTP(constructor) {
+	// Neither in scope means this package is not an http handler package: the
+	// rule only governs a package that already claims to have one.
+	if handler == nil && constructor == nil {
 		return nil, nil
 	}
 
@@ -307,6 +307,15 @@ func isError(t types.Type) bool {
 
 func isHTTPHandler(t types.Type) bool {
 	return isNamedType(t, "net/http", "Handler")
+}
+
+// inScope is d when its declaration mentions net/http, and nil otherwise, so
+// an unrelated declaration that shares the name is treated as absent.
+func inScope(d *decl) *decl {
+	if !mentionsHTTP(d) {
+		return nil
+	}
+	return d
 }
 
 // mentionsHTTP reports whether d's declared type refers to a net/http type.

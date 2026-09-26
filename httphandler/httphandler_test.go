@@ -31,6 +31,7 @@ func TestAnalyzer(t *testing.T) {
 		"NewHandler returning results other than http.Handler and error is reported": {"badreturn/..."},
 		"NewHandler returning a type other than http.Handler is reported":            {"badreturntype/..."},
 		"the declaration in the wrong file is reported":                              {"wrongfile/..."},
+		"a NewHandler outside the scope does not count as a second form":             {"mixedscope/..."},
 		"a NewHandler whose signature never mentions net/http is skipped":            {"sloglike/...", "connectlike/..."},
 		"a Handler in package main is skipped":                                       {"mainskip/..."},
 		"a Handler declared only in a _test.go file is skipped":                      {"testonly/..."},
