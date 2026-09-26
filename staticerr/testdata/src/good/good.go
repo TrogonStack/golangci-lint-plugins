@@ -8,6 +8,9 @@ import "errors"
 // A var on its own.
 var ErrAlone = errors.New("alone")
 
+// An unexported var, which is still declared once.
+var errHidden = errors.New("hidden")
+
 // A var block, which is how a package with more than one sentinel declares
 // them.
 var (
@@ -24,6 +27,10 @@ var byCode = map[int]error{
 func Lookup(code int) error {
 	if err, ok := byCode[code]; ok {
 		return err
+	}
+
+	if code == 0 {
+		return errHidden
 	}
 
 	return ErrAlone

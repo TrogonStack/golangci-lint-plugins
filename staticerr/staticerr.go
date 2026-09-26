@@ -13,8 +13,8 @@
 // them. A caller is left comparing message text, which is the thing wrapping
 // exists to stop, or it gives up and treats every failure of the function
 // alike. Hoisting the call to a package-level var costs one line and one name,
-// and the name is the part that matters: it is what makes the condition
-// something a caller can ask about.
+// and gives the condition a single value to match. Whether that var is
+// exported is the package's choice and not this linter's.
 //
 // The rule is deliberately about errors.New and not about fmt.Errorf, which is
 // the other common way to build an error. An fmt.Errorf interpolates, so there
