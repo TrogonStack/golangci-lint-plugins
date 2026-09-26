@@ -14,8 +14,11 @@ skipped.
 
 ```go
 return connect.NewError(connect.CodeNotFound, ErrOrderNotFound) // reported
-return rpcerr.NewError(ErrOrderNotFound)
+return rpcerr.NewError(connect.CodeNotFound, ErrOrderNotFound)
 ```
+
+The replacement's signature is its own business: it can mirror
+`connect.NewError`, take only the error, or anything else.
 
 ## Settings
 
