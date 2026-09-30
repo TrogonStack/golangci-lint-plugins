@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/TrogonStack/golangci-lint-plugins/compare/v0.1.0...v0.2.0) (2026-09-30)
+
+
+### Features
+
+* **ctxflow:** Add ctxflow linter ([#9](https://github.com/TrogonStack/golangci-lint-plugins/issues/9)) ([143a127](https://github.com/TrogonStack/golangci-lint-plugins/commit/143a1274a8b0c6abf93fa1e9806d79a6ac0e60b5))
+
 ## 0.1.0 (2026-09-26)
 
 
