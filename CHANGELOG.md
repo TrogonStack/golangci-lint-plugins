@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/TrogonStack/golangci-lint-plugins/compare/v0.2.0...v0.3.0) (2026-10-16)
+
+
+### Features
+
+* **objectid:** Add objectid linter ([#12](https://github.com/TrogonStack/golangci-lint-plugins/issues/12)) ([79be30d](https://github.com/TrogonStack/golangci-lint-plugins/commit/79be30df12e4928d7ad60c6db7d9bbea482c1722))
+
 ## [0.2.0](https://github.com/TrogonStack/golangci-lint-plugins/compare/v0.1.0...v0.2.0) (2026-09-30)
 
 
