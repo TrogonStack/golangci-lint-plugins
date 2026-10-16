@@ -52,3 +52,8 @@ func Body() {
 		}{}
 	}
 }
+
+// OrderID embeds uuid.UUID, which is the typed ID the rule asks for.
+type OrderID struct {
+	uuid.UUID
+}

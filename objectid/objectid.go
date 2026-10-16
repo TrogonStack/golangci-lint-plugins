@@ -258,6 +258,8 @@ func (c *checker) rawFields(fields *ast.FieldList) []rawField {
 	}
 	var found []rawField
 	for _, field := range fields.List {
+		// An embedded field has no Names, and is skipped on purpose: a struct
+		// embedding uuid.UUID is how a typed ID is declared.
 		for _, name := range field.Names {
 			if name.Name == "_" || c.ignore[name.Name] || !c.patterns.match(name.Name) {
 				continue
