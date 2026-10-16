@@ -35,3 +35,9 @@ type Embedded struct {
 	OrderID
 	Name string
 }
+
+// Literals are left alone while untyped-constants is off, the default.
+func Literals() {
+	_ = OrderID("abc")
+	Named("abc", nil, nil)
+}

@@ -42,14 +42,11 @@ Skipped:
 
 - `*_test.go` and generated files;
 - packages under an `exclude-packages` entry;
-- names listed in `ignore-names`, matched exactly and case-sensitively;
+- names listed in `ignore-names`;
 - function literals, since their signature is usually imposed by what the
   literal is passed to;
-- a method whose receiver implements an interface from an imported package,
-  directly or not, when that interface has a method of the same name and an
-  identical signature. The interface owns the signature, so it is reported
-  where the interface is declared. An interface in a package that imports
-  this one is not seen, so a method that implements one is still reported.
+- a method that implements an interface from an imported package; the
+  interface is reported instead.
 
 ## Settings
 

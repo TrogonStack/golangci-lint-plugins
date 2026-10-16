@@ -51,6 +51,7 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
+	"golang.org/x/tools/go/types/typeutil"
 )
 
 // Doc is the analyzer's one-line description, shown by go vet -help and
@@ -58,8 +59,8 @@ import (
 const Doc = "checks that parameters, results and struct fields named like an ID have a typed ID instead of a raw string, integer or uuid.UUID"
 
 const (
-	rawMessage      = "%s is a raw %s; use a typed ID"
-	untypedMessage  = "untyped constant converted to %s; build the ID with its constructor or parser instead of a literal"
+	rawMessage      = "%s is a raw %s; use a typed ID%s"
+	untypedMessage  = "untyped constant converted to %s; build the ID with its constructor or parser instead of a literal%s"
 	uuidPackagePath = "github.com/google/uuid"
 	uuidTypeName    = "UUID"
 )
@@ -110,7 +111,7 @@ type Settings struct {
 
 // Analyzer is objectid with the default settings, for any analysis driver:
 // golangci-lint through objectid/plugin, or a singlechecker binary.
-var Analyzer = newAnalyzer(config{patterns: newPatterns(defaultNamePatterns)})
+var Analyzer = newAnalyzer(config{patterns: defaultNamePatterns})
 
 // New is objectid configured by settings.
 func New(settings Settings) (*analysis.Analyzer, error) {
@@ -135,36 +136,27 @@ func New(settings Settings) (*analysis.Analyzer, error) {
 			return nil, fmt.Errorf("%w: entry %d", ErrEmptyPackagePrefix, i)
 		}
 	}
+	var suffix string
+	if settings.Suggestion != "" {
+		suffix = " (" + settings.Suggestion + ")"
+	}
 	return newAnalyzer(config{
-		patterns:         newPatterns(names),
+		patterns:         names,
 		ignore:           ignore,
-		suggestion:       settings.Suggestion,
+		suffix:           suffix,
 		exclude:          settings.ExcludePackages,
 		untypedConstants: settings.UntypedConstants,
 	}), nil
 }
 
-type patterns struct {
-	suffixes []string
-	bare     map[string]bool
-}
-
-func newPatterns(suffixes []string) patterns {
-	bare := make(map[string]bool, len(suffixes))
-	for _, s := range suffixes {
-		bare[strings.ToLower(s)] = true
-	}
-	return patterns{suffixes: suffixes, bare: bare}
-}
+// patterns are name suffixes; a name equal to one in lower case matches too.
+type patterns []string
 
 // match is case-sensitive, so that valid and Grid, which end in id, do not
 // read as IDs.
 func (p patterns) match(name string) bool {
-	if p.bare[name] {
-		return true
-	}
-	for _, s := range p.suffixes {
-		if strings.HasSuffix(name, s) {
+	for _, s := range p {
+		if name == strings.ToLower(s) || strings.HasSuffix(name, s) {
 			return true
 		}
 	}
@@ -174,7 +166,7 @@ func (p patterns) match(name string) bool {
 type config struct {
 	patterns         patterns
 	ignore           map[string]bool
-	suggestion       string
+	suffix           string // the suggestion, in parentheses, for every message
 	exclude          []PackagePrefix
 	untypedConstants bool
 }
@@ -213,36 +205,30 @@ func (c *checker) run() {
 		if strings.HasSuffix(filename, "_test.go") || ast.IsGenerated(file) {
 			continue
 		}
-
-		ast.Inspect(file, func(n ast.Node) bool {
-			switch node := n.(type) {
-			case *ast.FuncDecl:
-				if !c.imposed(node) {
-					c.checkFields(node.Type.Params)
-					c.checkFields(node.Type.Results)
-				}
-			}
-			return c.visit(n)
-		})
+		ast.Inspect(file, c.visit)
 	}
 }
 
-// visit handles everything but a function's own signature, and reports
-// whether to descend into n.
+// visit checks n and reports whether to descend into it.
 func (c *checker) visit(n ast.Node) bool {
 	switch node := n.(type) {
+	case *ast.FuncDecl:
+		found := append(c.rawFields(node.Type.Params), c.rawFields(node.Type.Results)...)
+		if len(found) > 0 && !c.imposed(node) {
+			c.report(found)
+		}
 	case *ast.FuncLit:
 		// Skip the literal's own signature but keep going into its body,
 		// which can declare struct types of its own.
-		ast.Inspect(node.Body, func(n ast.Node) bool { return c.visit(n) })
+		ast.Inspect(node.Body, c.visit)
 		return false
 	case *ast.StructType:
-		c.checkFields(node.Fields)
+		c.report(c.rawFields(node.Fields))
 	case *ast.InterfaceType:
 		for _, method := range node.Methods.List {
 			if ft, ok := method.Type.(*ast.FuncType); ok {
-				c.checkFields(ft.Params)
-				c.checkFields(ft.Results)
+				c.report(c.rawFields(ft.Params))
+				c.report(c.rawFields(ft.Results))
 			}
 		}
 	case *ast.GenDecl:
@@ -252,18 +238,25 @@ func (c *checker) visit(n ast.Node) bool {
 			return false
 		}
 	case ast.Expr:
-		if c.untypedConstants && c.isUntypedConstant(node) {
-			c.checkUntyped(node)
+		if c.untypedConstants && c.checkUntyped(node) {
 			return false
 		}
 	}
 	return true
 }
 
-func (c *checker) checkFields(fields *ast.FieldList) {
+// rawField is a field name that would be reported, with its type spelled
+// for the message.
+type rawField struct {
+	name *ast.Ident
+	raw  string
+}
+
+func (c *checker) rawFields(fields *ast.FieldList) []rawField {
 	if fields == nil {
-		return
+		return nil
 	}
+	var found []rawField
 	for _, field := range fields.List {
 		for _, name := range field.Names {
 			if name.Name == "_" || c.ignore[name.Name] || !c.patterns.match(name.Name) {
@@ -277,12 +270,15 @@ func (c *checker) checkFields(fields *ast.FieldList) {
 			if !ok {
 				continue
 			}
-			msg := fmt.Sprintf(rawMessage, name.Name, raw)
-			if c.suggestion != "" {
-				msg += " (" + c.suggestion + ")"
-			}
-			c.pass.Reportf(name.Pos(), "%s", msg)
+			found = append(found, rawField{name: name, raw: raw})
 		}
+	}
+	return found
+}
+
+func (c *checker) report(found []rawField) {
+	for _, f := range found {
+		c.pass.Reportf(f.name.Pos(), rawMessage, f.name.Name, f.raw, c.suffix)
 	}
 }
 
@@ -304,7 +300,7 @@ func rawID(t types.Type) (string, bool) {
 			fmt.Fprintf(&prefix, "[%d]", u.Len())
 			t = u.Elem()
 		case *types.Basic:
-			if u.Info()&(types.IsString|types.IsInteger) == 0 || u.Info()&types.IsUntyped != 0 {
+			if u.Info()&(types.IsString|types.IsInteger) == 0 {
 				return "", false
 			}
 			return prefix.String() + u.Name(), true
@@ -342,11 +338,11 @@ func (c *checker) imposed(fn *ast.FuncDecl) bool {
 	if c.interfaces == nil {
 		c.interfaces = indexInterfaces(c.pass.Pkg)
 	}
+	// Implements needs the receiver's method to match the interface's, so
+	// an interface found by name is one whose signature fn shares.
 	for _, iface := range c.interfaces[fn.Name.Name] {
-		for m := range iface.Methods() {
-			if m.Name() == fn.Name.Name && types.Identical(m.Type(), obj.Type()) && types.Implements(recvPtr, iface) {
-				return true
-			}
+		if types.Implements(recvPtr, iface) {
+			return true
 		}
 	}
 	return false
@@ -357,17 +353,8 @@ func (c *checker) imposed(fn *ast.FuncDecl) bool {
 // of their methods.
 func indexInterfaces(pkg *types.Package) map[string][]*types.Interface {
 	index := map[string][]*types.Interface{}
-	seen := map[*types.Package]bool{pkg: true}
-	queue := append([]*types.Package(nil), pkg.Imports()...)
-	for len(queue) > 0 {
-		p := queue[0]
-		queue = queue[1:]
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		queue = append(queue, p.Imports()...)
-
+	// An import cycle is a compile error, so pkg is never its own dependency.
+	for _, p := range typeutil.Dependencies(pkg.Imports()...) {
 		scope := p.Scope()
 		for _, name := range scope.Names() {
 			tn, ok := scope.Lookup(name).(*types.TypeName)
@@ -390,22 +377,34 @@ func indexInterfaces(pkg *types.Package) map[string][]*types.Interface {
 	return index
 }
 
-// isUntypedConstant reports whether expr is a constant built only from
-// literals and untyped constants. The type checker records such an
-// expression with the type it was converted to, so its own type cannot
-// tell; how it is spelled can.
-func (c *checker) isUntypedConstant(expr ast.Expr) bool {
+// checkUntyped reports expr when it is an untyped constant that becomes a
+// named ID type, and reports whether expr was an untyped constant at all, so
+// visit need not descend into it.
+func (c *checker) checkUntyped(expr ast.Expr) bool {
 	tv, ok := c.pass.TypesInfo.Types[expr]
-	if !ok || tv.Value == nil {
+	if !ok || tv.Value == nil || !c.isUntypedConstant(expr) {
 		return false
 	}
+	named, ok := types.Unalias(tv.Type).(*types.Named)
+	if ok && c.patterns.match(named.Obj().Name()) && !isZero(tv.Value) {
+		c.pass.Reportf(expr.Pos(), untypedMessage, types.TypeString(named, types.RelativeTo(c.pass.Pkg)), c.suffix)
+	}
+	return true
+}
+
+// isUntypedConstant reports whether expr, a constant, is built only from
+// literals and untyped constants. The type checker records such an
+// expression with the type it was converted to, so its own type cannot
+// tell; how it is spelled can. Every operand of a constant is a constant, so
+// only the spelling is checked here.
+func (c *checker) isUntypedConstant(expr ast.Expr) bool {
 	switch e := expr.(type) {
 	case *ast.BasicLit:
 		return true
 	case *ast.Ident:
-		return c.isUntypedConst(e)
+		return c.untypedConstIdent(e)
 	case *ast.SelectorExpr:
-		return c.isUntypedConst(e.Sel)
+		return c.untypedConstIdent(e.Sel)
 	case *ast.ParenExpr:
 		return c.isUntypedConstant(e.X)
 	case *ast.UnaryExpr:
@@ -416,22 +415,13 @@ func (c *checker) isUntypedConstant(expr ast.Expr) bool {
 	return false
 }
 
-func (c *checker) isUntypedConst(ident *ast.Ident) bool {
+func (c *checker) untypedConstIdent(ident *ast.Ident) bool {
 	obj, ok := c.pass.TypesInfo.Uses[ident].(*types.Const)
 	if !ok {
 		return false
 	}
 	basic, ok := obj.Type().(*types.Basic)
 	return ok && basic.Info()&types.IsUntyped != 0
-}
-
-func (c *checker) checkUntyped(expr ast.Expr) {
-	tv := c.pass.TypesInfo.Types[expr]
-	named, ok := types.Unalias(tv.Type).(*types.Named)
-	if !ok || !c.patterns.match(named.Obj().Name()) || isZero(tv.Value) {
-		return
-	}
-	c.pass.Reportf(expr.Pos(), untypedMessage, types.TypeString(named, types.RelativeTo(c.pass.Pkg)))
 }
 
 func isZero(v constant.Value) bool {

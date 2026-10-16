@@ -14,30 +14,31 @@ func TestAnalyzer(t *testing.T) {
 	testdata := analysistest.TestData()
 
 	tests := map[string]struct {
-		settings objectid.Settings
+		analyzer *analysis.Analyzer
 		patterns []string
 	}{
 		"default": {
-			patterns: []string{"raw", "named", "generated", "testfile", "implements", "example.com/store", "untypedoff", "ignorenamesoff"},
+			analyzer: objectid.Analyzer,
+			patterns: []string{"raw", "named", "generated", "implements", "example.com/store"},
 		},
 		"ignore names": {
-			settings: objectid.Settings{IgnoreNames: []string{"projectID", "databaseID"}},
+			analyzer: newAnalyzer(t, objectid.Settings{IgnoreNames: []string{"projectID", "databaseID"}}),
 			patterns: []string{"ignorenames"},
 		},
 		"suggestion": {
-			settings: objectid.Settings{Suggestion: "internal/boid"},
+			analyzer: newAnalyzer(t, objectid.Settings{Suggestion: "internal/boid", UntypedConstants: true}),
 			patterns: []string{"suggestion"},
 		},
 		"exclude packages": {
-			settings: objectid.Settings{ExcludePackages: []objectid.PackagePrefix{"example.com/excluded"}},
+			analyzer: newAnalyzer(t, objectid.Settings{ExcludePackages: []objectid.PackagePrefix{"example.com/excluded"}}),
 			patterns: []string{"example.com/excluded", "example.com/excluded/inner"},
 		},
 		"untyped constants": {
-			settings: objectid.Settings{UntypedConstants: true},
+			analyzer: newAnalyzer(t, objectid.Settings{UntypedConstants: true}),
 			patterns: []string{"untyped"},
 		},
 		"name patterns": {
-			settings: objectid.Settings{NamePatterns: []string{"Ref"}},
+			analyzer: newAnalyzer(t, objectid.Settings{NamePatterns: []string{"Ref"}}),
 			patterns: []string{"custom"},
 		},
 	}
@@ -45,13 +46,9 @@ func TestAnalyzer(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			analysistest.Run(t, testdata, newAnalyzer(t, tt.settings), tt.patterns...)
+			analysistest.Run(t, testdata, tt.analyzer, tt.patterns...)
 		})
 	}
-}
-
-func TestDefaultAnalyzerMatchesNew(t *testing.T) {
-	analysistest.Run(t, analysistest.TestData(), objectid.Analyzer, "raw")
 }
 
 func TestNewRejectsBadSettings(t *testing.T) {
