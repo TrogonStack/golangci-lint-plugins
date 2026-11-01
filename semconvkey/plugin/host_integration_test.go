@@ -19,10 +19,7 @@ func TestGolangciHost(t *testing.T) {
 	if binary == "" {
 		t.Fatal("set SEMCONVKEY_GOLANGCI_BINARY to a golangci-lint binary built with this plugin")
 	}
-	binary, err := exec.LookPath(binary)
-	if err != nil {
-		t.Fatal(err)
-	}
+	binary = resolveHostBinary(t, binary)
 	project := t.TempDir()
 	writeHostFile(t, project, "go.mod", `module example.com/semconvhost
 
@@ -88,8 +85,10 @@ func Create(meter metric.Meter) { _, _ = meter.Int64Counter("app.raw") }
 		checkGeneratedFiles  bool
 		generatedFilter      string
 		wantDiagnostic       string
+		relativeBinary       bool
 	}{
 		{name: "trusted constructors and provider bootstrap", source: bootstrap, generatedInstruments: true, checkGeneratedFiles: true, generatedFilter: "disable"},
+		{name: "relative binary path", source: bootstrap, generatedInstruments: true, generatedFilter: "disable", relativeBinary: true},
 		{
 			name: "saved metric constructor", generatedInstruments: true, generatedFilter: "disable", wantDiagnostic: instrumentDiagnostic,
 			source: `package probe
@@ -145,6 +144,18 @@ func Create(meter metric.Meter) { _, _ = meter.Int64Counter(appsemconv.CounterNa
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			caseBinary := binary
+			if test.relativeBinary {
+				workingDirectory, err := os.Getwd()
+				if err != nil {
+					t.Fatal(err)
+				}
+				relative, err := filepath.Rel(workingDirectory, binary)
+				if err != nil {
+					t.Fatal(err)
+				}
+				caseBinary = resolveHostBinary(t, "."+string(filepath.Separator)+relative)
+			}
 			writeHostFile(t, project, "probe/probe.go", test.source)
 			configuration := fmt.Sprintf(`version: "2"
 linters:
@@ -164,7 +175,7 @@ linters:
 				configuration += "          check-generated-files: true\n"
 			}
 			writeHostFile(t, project, ".golangci.yml", configuration)
-			output, err := runHostCommand(t, project, binary, "run", "--config", ".golangci.yml", "./probe")
+			output, err := runHostCommand(t, project, caseBinary, "run", "--config", ".golangci.yml", "./probe")
 			if test.wantDiagnostic == "" {
 				if err != nil {
 					t.Fatalf("unexpected host failure: %v\n%s", err, output)
@@ -177,6 +188,19 @@ linters:
 			}
 		})
 	}
+}
+
+func resolveHostBinary(t *testing.T, binary string) string {
+	t.Helper()
+	resolved, err := exec.LookPath(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absolute, err := filepath.Abs(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return absolute
 }
 
 func writeHostFile(t *testing.T, project, name, contents string) {
