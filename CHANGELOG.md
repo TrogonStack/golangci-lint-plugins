@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/TrogonStack/golangci-lint-plugins/compare/v0.3.0...v0.3.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **semconvkey:** Enforce telemetry definition boundaries ([#14](https://github.com/TrogonStack/golangci-lint-plugins/issues/14)) ([29bdf09](https://github.com/TrogonStack/golangci-lint-plugins/commit/29bdf099b3bbc35d8443afa4869189fd73607b04))
+
 ## [0.3.0](https://github.com/TrogonStack/golangci-lint-plugins/compare/v0.2.0...v0.3.0) (2026-10-16)
 
 
