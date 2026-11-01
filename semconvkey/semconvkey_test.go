@@ -1,6 +1,7 @@
 package semconvkey_test
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -47,16 +48,20 @@ func TestAnalyzer(t *testing.T) {
 				"metricname",
 				"unconfigured",
 				"generated",
+				"upstreamorigin",
+				"attributereferences",
+				"attributedotcapture",
+				"factorycompat",
 				"testskip",
 			},
 		},
 		"allowed packages": {
 			analyzer: configured,
-			patterns: []string{"configured", "zeroliteral", "example.com/appsemconv"},
+			patterns: []string{"configured", "zeroliteral", "initialization", "example.com/appsemconv"},
 		},
 		"generated instruments": {
 			analyzer: generated,
-			patterns: []string{"handrolled", "example.com/appsemconv"},
+			patterns: []string{"handrolled", "references", "redeclared", "transitive", "attributereferences", "attributedotcapture", "initialization", "example.com/appsemconv"},
 		},
 	}
 
@@ -84,4 +89,24 @@ func TestNewRejectsPackagePrefixNotNamedForSemconv(t *testing.T) {
 	if !errors.Is(err, semconvkey.ErrPackagePrefixNotSemconv) {
 		t.Fatalf("got %v, want %v", err, semconvkey.ErrPackagePrefixNotSemconv)
 	}
+}
+
+func TestGeneratedFilesCanBeChecked(t *testing.T) {
+	var settings semconvkey.Settings
+	if err := json.Unmarshal([]byte(`{"allowed-packages":["example.com/appsemconv"],"generated-instruments":true,"check-generated-files":true}`), &settings); err != nil {
+		t.Fatal(err)
+	}
+	analyzer, err := semconvkey.New(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysistest.Run(t, analysistest.TestData(), analyzer, "checkedgenerated", "example.com/appsemconvextra", "example.com/appsemconv")
+}
+
+func TestGeneratedFileCheckingKeepsNameOnlyMode(t *testing.T) {
+	analyzer, err := semconvkey.New(semconvkey.Settings{CheckGeneratedFiles: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysistest.Run(t, analysistest.TestData(), analyzer, "checkedattribute", "factorycompat")
 }

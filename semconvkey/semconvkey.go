@@ -1,48 +1,4 @@
-// Package semconvkey checks that an OpenTelemetry attribute key or metric
-// instrument name comes from a package allowed to declare one, rather than
-// being spelled by hand at the call site. go.opentelemetry.io and everything
-// under it is always allowed, so upstream semconv works with no
-// configuration; a project that declares its own names lists the packages
-// holding them in allowed-packages, each named to end in semconv.
-//
-// The reason is that an attribute key or a metric name is a contract in the
-// same way a protobuf field is: a dashboard, an alert or a query built
-// against it breaks silently the day it is respelled. Declaring each name
-// once, in a package whose job is to hold them, is what keeps it from
-// drifting; a literal string or a local const at a call site is a second,
-// unreviewed place the same name can change.
-//
-// It reports, everywhere but an allowed package:
-//
-//   - an attribute constructor that takes the key as a raw string, such as
-//     attribute.String("app.user.tier", v), whatever the string is;
-//   - a method of attribute.Key that builds a KeyValue, such as
-//     key.String(v), unless the key comes from an allowed package;
-//   - a conversion to attribute.Key, unless its operand comes from an allowed
-//     package;
-//   - an attribute.KeyValue composite literal, unless its Key does;
-//   - a metric.Meter method that creates an instrument, such as
-//     meter.Int64Counter(name), unless the name does, or whatever the name
-//     is when generated-instruments is set;
-//   - a composite literal of a struct type a package listed in
-//     allowed-packages declares, when every field of that type is
-//     unexported, such as appsemconv.TierAttr{}.
-//
-// A literal of such a type written outside its package can only ever be the
-// zero value, since there is no field it could set: an attribute with its
-// key and an empty value, or an instrument that records nothing. The
-// package's own constructor is the only way to get one that means something,
-// and a parameter typed as one is only required if the zero value cannot be
-// passed in its place. go.opentelemetry.io is left out of this rule, since
-// it declares many such types whose zero value is fine to build.
-//
-// A value comes from an allowed package when it is a constant, variable,
-// field or function result that package declares, named directly at the use.
-// A local copy of one does not count, even an unchanged one: the rule is
-// about where a name is spelled, and a local is a place it could be
-// respelled. *_test.go files and generated files are skipped: a test asserts
-// the wire name as a string on purpose, and generated code is never
-// hand-edited to begin with.
+// Package semconvkey confines telemetry identities to semantic-convention packages.
 package semconvkey
 
 import (
@@ -66,9 +22,10 @@ const (
 	metricPackage    = "go.opentelemetry.io/otel/metric"
 )
 
-// upstream is always allowed, since it is where semconv and the
-// OpenTelemetry API that builds on it declare their own names.
+// Upstream implementations are not application call sites.
 const upstream PackagePrefix = "go.opentelemetry.io"
+
+const upstreamDefinitions PackagePrefix = "go.opentelemetry.io/otel/semconv"
 
 const (
 	keyMessage         = "an OpenTelemetry attribute key must come from go.opentelemetry.io/otel/semconv or a package listed in allowed-packages, not be spelled at the call site"
@@ -128,16 +85,15 @@ func (p PackagePrefix) namedForSemconv() bool {
 type Settings struct {
 	AllowedPackages []PackagePrefix `json:"allowed-packages"`
 
-	// GeneratedInstruments reports every instrument created outside an
-	// allowed package, whatever its name, for a project whose allowed
-	// packages build its instruments rather than only naming them.
+	// GeneratedInstruments confines native constructors to trusted packages.
 	GeneratedInstruments bool `json:"generated-instruments"`
+
+	// CheckGeneratedFiles includes generated files outside trusted packages.
+	CheckGeneratedFiles bool `json:"check-generated-files"`
 }
 
-// Analyzer is semconvkey with the default settings, allowing only
-// go.opentelemetry.io, for any analysis driver: golangci-lint through
-// semconvkey/plugin, or a singlechecker binary.
-var Analyzer = newAnalyzer(checker{allowed: allowed{upstream}})
+// Analyzer uses the default settings for any Go analysis driver.
+var Analyzer = newAnalyzer(checker{allowed: allowed{upstream}, definitions: allowed{upstreamDefinitions}})
 
 // New is semconvkey configured by settings.
 func New(settings Settings) (*analysis.Analyzer, error) {
@@ -153,8 +109,10 @@ func New(settings Settings) (*analysis.Analyzer, error) {
 	}
 	return newAnalyzer(checker{
 		allowed:              append(allowed{upstream}, configured...),
+		definitions:          append(allowed{upstreamDefinitions}, configured...),
 		configured:           configured,
 		generatedInstruments: settings.GeneratedInstruments,
+		checkGeneratedFiles:  settings.CheckGeneratedFiles,
 	}), nil
 }
 
@@ -189,7 +147,10 @@ type checker struct {
 	pass                 *analysis.Pass
 	allowed              allowed
 	configured           allowed
+	definitions          allowed
 	generatedInstruments bool
+	checkGeneratedFiles  bool
+	metricConstructors   map[string][]*types.Signature
 }
 
 func (c checker) run() {
@@ -197,18 +158,31 @@ func (c checker) run() {
 		return
 	}
 
+	c.metricConstructors = metricConstructors(c.pass.Pkg)
 	for _, file := range c.pass.Files {
 		filename := c.pass.Fset.Position(file.Pos()).Filename
-		if strings.HasSuffix(filename, "_test.go") || isGenerated(file) {
+		if strings.HasSuffix(filename, "_test.go") || isGenerated(file) && !c.checkGeneratedFiles {
 			continue
 		}
 
-		ast.Inspect(file, func(n ast.Node) bool {
-			switch node := n.(type) {
+		callees := make(map[ast.Expr]bool)
+		selectors := make(map[*ast.Ident]bool)
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch expression := node.(type) {
 			case *ast.CallExpr:
-				c.checkCall(node)
+				callees[ast.Unparen(expression.Fun)] = true
+				c.checkCall(expression)
+			case *ast.SelectorExpr:
+				selectors[expression.Sel] = true
+				if !callees[expression] {
+					c.checkReference(expression.Sel, expression.X)
+				}
+			case *ast.Ident:
+				if !selectors[expression] && !callees[expression] {
+					c.checkReference(expression, nil)
+				}
 			case *ast.CompositeLit:
-				c.checkCompositeLit(node)
+				c.checkCompositeLit(expression)
 			}
 			return true
 		})
@@ -248,8 +222,15 @@ func (c checker) checkCall(call *ast.CallExpr) {
 	if !ok || fn.Pkg() == nil {
 		return
 	}
+	if c.isMetricConstructor(fn) {
+		if c.generatedInstruments {
+			c.pass.Reportf(call.Pos(), "%s", instrumentMessage)
+		} else if len(args) > 0 && !c.fromAllowed(args[0]) {
+			c.pass.Reportf(call.Pos(), "%s", metricNameMessage)
+		}
+		return
+	}
 	sig := fn.Type().(*types.Signature)
-
 	switch fn.Pkg().Path() {
 	case attributePackage:
 		if !returnsKeyValue(sig) {
@@ -264,18 +245,81 @@ func (c checker) checkCall(call *ast.CallExpr) {
 		if recv != nil && !c.isKeyConversion(recv) && !c.fromAllowed(recv) {
 			c.pass.Reportf(call.Pos(), "%s", keyMessage)
 		}
-	case metricPackage:
-		if !instrumentMethods[fn.Name()] {
-			return
+	}
+}
+
+func (c checker) checkReference(identifier *ast.Ident, receiver ast.Expr) {
+	function, ok := c.pass.TypesInfo.Uses[identifier].(*types.Func)
+	if !ok || function.Pkg() == nil {
+		return
+	}
+	if c.generatedInstruments && c.isMetricConstructor(function) {
+		c.pass.Reportf(identifier.Pos(), "%s", instrumentMessage)
+		return
+	}
+	if function.Pkg().Path() != attributePackage {
+		return
+	}
+	signature := function.Type().(*types.Signature)
+	if !returnsKeyValue(signature) {
+		return
+	}
+	if signature.Recv() == nil {
+		if takesRawKey(signature) {
+			c.pass.Reportf(identifier.Pos(), rawKeyMessage, function.Name())
 		}
-		if c.generatedInstruments {
-			c.pass.Reportf(call.Pos(), "%s", instrumentMessage)
-			return
-		}
-		if len(args) > 0 && !c.fromAllowed(args[0]) {
-			c.pass.Reportf(call.Pos(), "%s", metricNameMessage)
+		return
+	}
+	if receiver != nil && !c.isKeyConversion(receiver) && !c.fromAllowed(receiver) {
+		c.pass.Reportf(identifier.Pos(), "%s", keyMessage)
+	}
+}
+
+func (c checker) isMetricConstructor(function *types.Func) bool {
+	if !instrumentMethods[function.Name()] {
+		return false
+	}
+	signature := function.Type().(*types.Signature)
+	if signature.Recv() == nil {
+		return false
+	}
+	for _, canonical := range c.metricConstructors[function.Name()] {
+		if types.Identical(signature, canonical) {
+			return true
 		}
 	}
+	return false
+}
+
+func metricConstructors(root *types.Package) map[string][]*types.Signature {
+	constructors := make(map[string][]*types.Signature)
+	visited := make(map[*types.Package]bool)
+	var visit func(*types.Package)
+	visit = func(pkg *types.Package) {
+		if visited[pkg] {
+			return
+		}
+		visited[pkg] = true
+		for _, imported := range pkg.Imports() {
+			visit(imported)
+		}
+		if pkg.Path() != metricPackage {
+			return
+		}
+		meter := pkg.Scope().Lookup("Meter")
+		if meter == nil {
+			return
+		}
+		methods := types.NewMethodSet(meter.Type())
+		for index := range methods.Len() {
+			method := methods.At(index).Obj().(*types.Func)
+			if instrumentMethods[method.Name()] {
+				constructors[method.Name()] = append(constructors[method.Name()], method.Type().(*types.Signature))
+			}
+		}
+	}
+	visit(root)
+	return constructors
 }
 
 // isKeyConversion reports whether expr is a conversion to attribute.Key,
@@ -385,7 +429,7 @@ func (c checker) fromAllowed(expr ast.Expr) bool {
 
 func (c checker) declaredInAllowed(ident *ast.Ident) bool {
 	obj := c.pass.TypesInfo.Uses[ident]
-	return obj != nil && c.allowed.covers(obj.Pkg())
+	return obj != nil && c.definitions.covers(obj.Pkg())
 }
 
 // returnsKeyValue reports whether sig returns exactly one attribute.KeyValue.

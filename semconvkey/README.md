@@ -1,46 +1,108 @@
 # semconvkey
 
-Checks that an OpenTelemetry attribute key or metric instrument name comes
-from [semconv](https://pkg.go.dev/go.opentelemetry.io/otel/semconv) or a
-package allowed to declare one, instead of being spelled at the call site.
-Outside an allowed package, it reports:
+Checks that OpenTelemetry attribute keys and metric names come from
+[upstream semantic conventions](https://pkg.go.dev/go.opentelemetry.io/otel/semconv)
+or configured semantic-convention packages.
 
-- `attribute.String("app.user.tier", v)` and the other constructors taking the
-  key as a raw string;
-- `key.String(v)` and the other `attribute.Key` methods, unless `key` comes
-  from an allowed package;
-- `attribute.Key(x)`, unless `x` comes from an allowed package;
-- an `attribute.KeyValue{...}` literal, unless its `Key` comes from an allowed
-  package;
-- `meter.Int64Counter(name)` and the other `metric.Meter` instrument methods,
-  unless `name` comes from an allowed package, or whatever `name` is when
-  `generated-instruments` is set;
-- a composite literal such as `appsemconv.TierAttr{}` of a struct type an
-  `allowed-packages` entry declares with only unexported fields, which can
-  only ever be its zero value; the package's own constructor is the way to
-  build one.
+Outside trusted packages, it reports:
 
-A value comes from an allowed package when it names a constant, variable,
-field or function result that package declares. A local copy does not count.
-`*_test.go` and generated files are skipped.
+- Raw-key attribute constructors such as `attribute.String("app.tier", value)`,
+  including references saved or passed as function values.
+- `attribute.Key` conversions and methods whose key does not come directly
+  from a semantic-convention package.
+- `attribute.KeyValue` literals whose `Key` has no approved origin.
+- Direct metric constructors whose name has no approved origin.
+- Composite literals of configured opaque types with only unexported fields.
+
+An approved origin is a constant, variable, field, or function result declared
+in `go.opentelemetry.io/otel/semconv` or a configured package, including their
+subpackages. A local copy does not count. Other SDK symbols, such as
+`otel.Version()`, do not define semantic keys or names.
+
+The analyzer resolves declarations through Go types. Import aliases, dot
+imports, method expressions, and embedded methods retain their identity.
+Tests are skipped. Generated files are skipped by default.
+
+## Generated instruments
+
+Set `generated-instruments: true` when configured packages build complete
+instruments rather than only declaring their names. It rejects native metric
+constructors regardless of the name, including captures such as:
+
+```go
+create := meter.Int64Counter
+```
+
+It also recognizes locally declared factory methods with the exact name and
+signature of an OpenTelemetry `metric.Meter` constructor. Unrelated methods
+with different result types remain valid. In the default name-only mode,
+saving a metric factory remains allowed.
+
+Use the configured package's constructor instead. The rule does not prohibit
+SDK/provider setup or raw instrument `Add`, `Record`, and `Observe` calls.
+It does not extend to span, event, or log naming.
 
 ## Settings
 
-| Setting            | Values                                                         | Default |
-| ------------------ | -------------------------------------------------------------- | ------- |
-| `allowed-packages` | Import paths that, with every package under them, may declare keys and names. Each must name a package ending in `semconv`, such as `appsemconv` | none    |
-| `generated-instruments` | `true` to report every instrument created outside an allowed package, for projects whose allowed packages build instruments, such as ones Weaver generates, rather than only name them | `false` |
+| Setting                 | Meaning                                                                                                                                | Default |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `allowed-packages`      | Import paths authorized to define semantic keys and names, including their subpackages. Each final path segment must end in `semconv`. | none    |
+| `generated-instruments` | Require native metric construction to remain in trusted packages, including constructor references and matching local factory methods. | `false` |
+| `check-generated-files` | Check generated files outside trusted packages.                                                                                        | `false` |
 
-`go.opentelemetry.io` is always allowed. An entry whose last path segment does not end in `semconv` fails plugin load, so the package that declares a project's names reads as the project's own semconv wherever it is imported.
+Upstream implementation packages under `go.opentelemetry.io` remain exempt
+from analysis. This exemption does not make every upstream symbol an approved
+semantic definition.
+
+For generated-directory enforcement, enable the analyzer setting and align
+**golangci-lint's issue filtering**:
 
 ```yaml
 linters:
+  enable:
+    - semconvkey
+  exclusions:
+    generated: disable
   settings:
     custom:
       semconvkey:
         type: module
         settings:
           allowed-packages:
-            - example.com/app/internal/appsemconv
+            - example.com/service/internal/appsemconv
           generated-instruments: true
+          check-generated-files: true
 ```
+
+Golangci-lint excludes issues from generated files by default. Without
+`linters.exclusions.generated: disable`, it can hide diagnostics even when
+this analyzer checks the file. Other linters may need their own path-specific
+exclusions. Do not exclude this linter for untrusted generated directories.
+
+A trusted package path or generated header does not authenticate Weaver
+output. Keep a pinned generation command and a drift check that compares its
+output with the committed files. The analyzer also does not prove arbitrary
+runtime provenance or that a typed value is nonzero. The existing restriction
+on opaque composite literals remains. Implicit zero declarations and later
+constructor assignment are unchanged.
+
+## Verification
+
+Run the Go tests with the version declared in `go.mod`:
+
+```sh
+go test -race ./...
+go vet ./...
+```
+
+Build a custom golangci-lint binary with this checkout to test issue visibility.
+
+For a local plugin build, use `path: .` instead of the plugin's released
+`version` in `.custom-gcl.yml`. Run the builder from this repository's root.
+
+```sh
+SEMCONVKEY_GOLANGCI_BINARY=/path/to/custom-binary go test -tags=integration ./semconvkey/plugin
+```
+
+The integration test is explicit and fails if the binary is not supplied.
+It checks the host's generated-file filtering as well as the analyzer.
