@@ -1,6 +1,7 @@
 # semconvkey
 
-Checks that OpenTelemetry attribute keys and metric names come from
+Checks that OpenTelemetry attribute keys, metric names and, when enabled,
+span names come from
 [upstream semantic conventions](https://pkg.go.dev/go.opentelemetry.io/otel/semconv)
 or configured semantic-convention packages.
 
@@ -12,6 +13,8 @@ Outside trusted packages, it reports:
   from a semantic-convention package.
 - `attribute.KeyValue` literals whose `Key` has no approved origin.
 - Direct metric constructors whose name has no approved origin.
+- With `span-names: true`, `trace.Tracer.Start` calls whose span name has no
+  approved origin.
 - Composite literals of configured opaque types with only unexported fields.
 
 An approved origin is a constant, variable, field, or function result declared
@@ -40,7 +43,25 @@ saving a metric factory remains allowed.
 
 Use the configured package's constructor instead. The rule does not prohibit
 SDK/provider setup or raw instrument `Add`, `Record`, and `Observe` calls.
-It does not extend to span, event, or log naming.
+It does not extend to event or log naming.
+
+## Span names
+
+Set `span-names: true` to check the name passed to `trace.Tracer.Start`. It
+also checks a local method with the exact name and signature of
+`trace.Tracer.Start`. The name must have an approved origin. A literal, a
+local constant and a concatenation are reported:
+
+```go
+ctx, span := tracer.Start(ctx, "checkout")            // reported
+ctx, span := tracer.Start(ctx, appsemconv.Checkout)   // allowed
+ctx, span := tracer.Start(ctx, appsemconv.Send(route)) // allowed
+```
+
+A span name that carries a value, such as a route, comes from a function in
+the configured package. Upstream semantic conventions do not declare span
+names, so this setting needs at least one entry in `allowed-packages`. A saved
+method value, such as `start := tracer.Start`, is not reported.
 
 ## Settings
 
@@ -49,6 +70,7 @@ It does not extend to span, event, or log naming.
 | `allowed-packages`      | Import paths authorized to define semantic keys and names, including their subpackages. Each final path segment must end in `semconv`. | none    |
 | `generated-instruments` | Require native metric construction to remain in trusted packages, including constructor references and matching local factory methods. | `false` |
 | `check-generated-files` | Check generated files outside trusted packages.                                                                                        | `false` |
+| `span-names`            | Require the span name passed to `trace.Tracer.Start` to come from an approved origin.                                                  | `false` |
 
 Upstream implementation packages under `go.opentelemetry.io` remain exempt
 from analysis. This exemption does not make every upstream symbol an approved

@@ -29,3 +29,7 @@ func (v TierAttr) KeyValue() attribute.KeyValue { return TierKey.String(v.value)
 type Options struct{ Prefix string }
 
 type Marker struct{}
+
+const CheckoutSpanName = "checkout"
+
+func SendSpanName(route string) string { return "send " + route }

@@ -15,11 +15,12 @@ import (
 
 // Doc is the analyzer's one-line description, shown by go vet -help and
 // golangci-lint's linter listing.
-const Doc = "checks that OpenTelemetry attribute keys and metric instrument names come from semconv or an allowed package, not a literal at the call site"
+const Doc = "checks that OpenTelemetry attribute keys, metric instrument names and, when enabled, span names come from semconv or an allowed package, not a literal at the call site"
 
 const (
 	attributePackage = "go.opentelemetry.io/otel/attribute"
 	metricPackage    = "go.opentelemetry.io/otel/metric"
+	tracePackage     = "go.opentelemetry.io/otel/trace"
 )
 
 // Upstream implementations are not application call sites.
@@ -32,6 +33,7 @@ const (
 	rawKeyMessage      = "attribute.%s takes the key as a raw string; call the method of a Key declared in go.opentelemetry.io/otel/semconv or a package listed in allowed-packages instead"
 	metricNameMessage  = "an OpenTelemetry metric name must come from go.opentelemetry.io/otel/semconv or a package listed in allowed-packages, not be spelled at the call site"
 	instrumentMessage  = "an OpenTelemetry metric instrument must be created by a package listed in allowed-packages, so its name, unit and required attributes come with it"
+	spanNameMessage    = "an OpenTelemetry span name must come from a package listed in allowed-packages, not be spelled at the call site"
 	zeroValueMessage   = "%s has no exported fields, so a composite literal of it can only be its zero value; build it with the constructor %s declares"
 	generatedHeaderRaw = `^// Code generated .* DO NOT EDIT\.$`
 )
@@ -39,6 +41,8 @@ const (
 // instrumentMethods is every metric.Meter method that mints an instrument
 // identified by name, synchronous and observable alike. RegisterCallback is
 // missing on purpose: it takes instruments, not a name.
+var spanMethods = map[string]bool{"Start": true}
+
 var instrumentMethods = map[string]bool{
 	"Int64Counter":                   true,
 	"Int64UpDownCounter":             true,
@@ -90,6 +94,10 @@ type Settings struct {
 
 	// CheckGeneratedFiles includes generated files outside trusted packages.
 	CheckGeneratedFiles bool `json:"check-generated-files"`
+
+	// SpanNames requires the name passed to trace.Tracer.Start to come from an
+	// allowed package.
+	SpanNames bool `json:"span-names"`
 }
 
 // Analyzer uses the default settings for any Go analysis driver.
@@ -113,6 +121,7 @@ func New(settings Settings) (*analysis.Analyzer, error) {
 		configured:           configured,
 		generatedInstruments: settings.GeneratedInstruments,
 		checkGeneratedFiles:  settings.CheckGeneratedFiles,
+		spanNames:            settings.SpanNames,
 	}), nil
 }
 
@@ -150,7 +159,9 @@ type checker struct {
 	definitions          allowed
 	generatedInstruments bool
 	checkGeneratedFiles  bool
+	spanNames            bool
 	metricConstructors   map[string][]*types.Signature
+	spanStarters         map[string][]*types.Signature
 }
 
 func (c checker) run() {
@@ -158,7 +169,8 @@ func (c checker) run() {
 		return
 	}
 
-	c.metricConstructors = metricConstructors(c.pass.Pkg)
+	c.metricConstructors = interfaceMethods(c.pass.Pkg, metricPackage, "Meter", instrumentMethods)
+	c.spanStarters = interfaceMethods(c.pass.Pkg, tracePackage, "Tracer", spanMethods)
 	for _, file := range c.pass.Files {
 		filename := c.pass.Fset.Position(file.Pos()).Filename
 		if strings.HasSuffix(filename, "_test.go") || isGenerated(file) && !c.checkGeneratedFiles {
@@ -222,6 +234,12 @@ func (c checker) checkCall(call *ast.CallExpr) {
 	if !ok || fn.Pkg() == nil {
 		return
 	}
+	if c.spanNames && matchesMethod(fn, c.spanStarters) {
+		if len(args) > 1 && !c.fromAllowed(args[1]) {
+			c.pass.Reportf(call.Pos(), "%s", spanNameMessage)
+		}
+		return
+	}
 	if c.isMetricConstructor(fn) {
 		if c.generatedInstruments {
 			c.pass.Reportf(call.Pos(), "%s", instrumentMessage)
@@ -276,23 +294,29 @@ func (c checker) checkReference(identifier *ast.Ident, receiver ast.Expr) {
 }
 
 func (c checker) isMetricConstructor(function *types.Func) bool {
-	if !instrumentMethods[function.Name()] {
-		return false
-	}
+	return matchesMethod(function, c.metricConstructors)
+}
+
+// matchesMethod reports whether function is a method with the name and the
+// signature of one in canonical, so an implementation of the interface is
+// held to the same rule as the interface itself.
+func matchesMethod(function *types.Func, canonical map[string][]*types.Signature) bool {
 	signature := function.Type().(*types.Signature)
 	if signature.Recv() == nil {
 		return false
 	}
-	for _, canonical := range c.metricConstructors[function.Name()] {
-		if types.Identical(signature, canonical) {
+	for _, candidate := range canonical[function.Name()] {
+		if types.Identical(signature, candidate) {
 			return true
 		}
 	}
 	return false
 }
 
-func metricConstructors(root *types.Package) map[string][]*types.Signature {
-	constructors := make(map[string][]*types.Signature)
+// interfaceMethods finds packagePath among root's transitive imports and
+// returns the signatures of the wanted methods of its typeName.
+func interfaceMethods(root *types.Package, packagePath, typeName string, wanted map[string]bool) map[string][]*types.Signature {
+	methodsByName := make(map[string][]*types.Signature)
 	visited := make(map[*types.Package]bool)
 	var visit func(*types.Package)
 	visit = func(pkg *types.Package) {
@@ -303,23 +327,23 @@ func metricConstructors(root *types.Package) map[string][]*types.Signature {
 		for _, imported := range pkg.Imports() {
 			visit(imported)
 		}
-		if pkg.Path() != metricPackage {
+		if pkg.Path() != packagePath {
 			return
 		}
-		meter := pkg.Scope().Lookup("Meter")
-		if meter == nil {
+		declared := pkg.Scope().Lookup(typeName)
+		if declared == nil {
 			return
 		}
-		methods := types.NewMethodSet(meter.Type())
+		methods := types.NewMethodSet(declared.Type())
 		for index := range methods.Len() {
 			method := methods.At(index).Obj().(*types.Func)
-			if instrumentMethods[method.Name()] {
-				constructors[method.Name()] = append(constructors[method.Name()], method.Type().(*types.Signature))
+			if wanted[method.Name()] {
+				methodsByName[method.Name()] = append(methodsByName[method.Name()], method.Type().(*types.Signature))
 			}
 		}
 	}
 	visit(root)
-	return constructors
+	return methodsByName
 }
 
 // isKeyConversion reports whether expr is a conversion to attribute.Key,
