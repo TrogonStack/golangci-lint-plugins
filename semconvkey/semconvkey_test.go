@@ -29,6 +29,14 @@ func TestAnalyzer(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	spanNames, err := semconvkey.New(semconvkey.Settings{
+		AllowedPackages: []semconvkey.PackagePrefix{"example.com/appsemconv"},
+		SpanNames:       true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	tests := map[string]struct {
 		analyzer *analysis.Analyzer
 		patterns []string
@@ -53,7 +61,12 @@ func TestAnalyzer(t *testing.T) {
 				"attributedotcapture",
 				"factorycompat",
 				"testskip",
+				"spannameoff",
 			},
+		},
+		"span names": {
+			analyzer: spanNames,
+			patterns: []string{"spanname", "example.com/appsemconv"},
 		},
 		"allowed packages": {
 			analyzer: configured,
